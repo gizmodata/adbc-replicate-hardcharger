@@ -1,4 +1,4 @@
-"""Integration fixtures: a real GizmoSQL target plus Oracle and PostgreSQL sources.
+"""Integration fixtures: real GizmoSQL and Hardcharger targets plus Oracle and PostgreSQL sources.
 
 These tests gate releases, so an unreachable server is a FAILURE, never a skip: a dead
 service container must not turn into a green job with zero coverage.
@@ -27,6 +27,9 @@ ORACLE_SYSTEM_PASSWORD = os.getenv("ADBC_REPLICATE_TEST_ORACLE_SYSTEM_PASSWORD",
 POSTGRES_URI = os.getenv("ADBC_REPLICATE_TEST_POSTGRES_URI", "postgresql://127.0.0.1:15432/source")
 POSTGRES_USERNAME = os.getenv("ADBC_REPLICATE_TEST_POSTGRES_USERNAME", "postgres")
 POSTGRES_PASSWORD = os.getenv("ADBC_REPLICATE_TEST_POSTGRES_PASSWORD", "postgres")
+HARDCHARGER_URI = os.getenv("ADBC_REPLICATE_TEST_HARDCHARGER_URI", "hardcharger://127.0.0.1:31387?tls=false")
+HARDCHARGER_USERNAME = os.getenv("ADBC_REPLICATE_TEST_HARDCHARGER_USERNAME", "hardcharger")
+HARDCHARGER_PASSWORD = os.getenv("ADBC_REPLICATE_TEST_HARDCHARGER_PASSWORD", "hardcharger")
 WAIT_SECONDS = int(os.getenv("ADBC_REPLICATE_TEST_WAIT_SECONDS", "180"))
 
 
@@ -47,6 +50,12 @@ def _wait(name: str, connect):
 def gizmosql_connect():
     import adbc_driver_gizmosql.dbapi as gizmosql
     return gizmosql.connect(uri=GIZMOSQL_URI, username=GIZMOSQL_USERNAME, password=GIZMOSQL_PASSWORD)
+
+
+def hardcharger_connect(autocommit=True):
+    from adbc_driver_hardcharger import dbapi as hardcharger
+    return hardcharger.connect(uri=HARDCHARGER_URI, username=HARDCHARGER_USERNAME, password=HARDCHARGER_PASSWORD,
+                               autocommit=autocommit)
 
 
 def oracle_connect(username=ORACLE_USERNAME, password=ORACLE_PASSWORD, autocommit=True):
@@ -83,6 +92,13 @@ def _drop_oracle(kind: str, name: str) -> str:
 @pytest.fixture(scope="session")
 def gizmosql():
     conn = _wait(name="GizmoSQL", connect=lambda: _probe(connect=gizmosql_connect, sql="SELECT 1"))
+    yield conn
+    conn.close()
+
+
+@pytest.fixture(scope="session")
+def hardcharger():
+    conn = _wait(name="Hardcharger", connect=lambda: _probe(connect=hardcharger_connect, sql="SELECT 1"))
     yield conn
     conn.close()
 
@@ -204,6 +220,16 @@ def gizmosql_target(prefix: str) -> dict:
     return {"type": "gizmosql", "uri": GIZMOSQL_URI, "username": GIZMOSQL_USERNAME, "password": GIZMOSQL_PASSWORD}
 
 
+def hardcharger_target(**extra) -> dict:
+    return {"type": "hardcharger", "uri": HARDCHARGER_URI, "username": HARDCHARGER_USERNAME,
+            "password": HARDCHARGER_PASSWORD, **extra}
+
+
+def hardcharger_source(**extra) -> dict:
+    return {"type": "hardcharger", "uri": HARDCHARGER_URI, "username": HARDCHARGER_USERNAME,
+            "password": HARDCHARGER_PASSWORD, **extra}
+
+
 def oracle_source(**extra) -> dict:
     return {"type": "oracle", "uri": ORACLE_URI, "username": ORACLE_USERNAME, "password": ORACLE_PASSWORD, **extra}
 
@@ -213,8 +239,8 @@ def postgres_source(**extra) -> dict:
             "password": POSTGRES_PASSWORD, **extra}
 
 
-def make_config(prefix: str, source: dict, objects: list, **extra):
-    data = {"version": 1, "name": f"it-{prefix}", "source": source, "target": gizmosql_target(prefix=prefix),
+def make_config(prefix: str, source: dict, objects: list, target: dict | None = None, **extra):
+    data = {"version": 1, "name": f"it-{prefix}", "source": source, "target": target or gizmosql_target(prefix=prefix),
             "objects": objects, "state": {"db_schema": f"{prefix}_state"}}
     data.update(extra)
     return parse_config(data=data)

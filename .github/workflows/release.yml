@@ -9,12 +9,14 @@ permissions:
 
 jobs:
   # The full suite (unit, lowest deps, integration against real GizmoSQL/Oracle/PostgreSQL,
-  # Python 3.15, Snowflake, Docker, Helm) on the tagged commit itself. Nothing publishes without it.
+  # Hardcharger, Python 3.15, Snowflake, Docker, Helm) on the tagged commit itself. Nothing publishes
+  # without it. packages: read lets the hardcharger job pull Hardcharger's image.
   tests:
     uses: ./.github/workflows/ci.yml
     secrets: inherit
     permissions:
       contents: read
+      packages: read
 
   build:
     needs: tests

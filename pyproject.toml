@@ -5,12 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "adbc-replicate"
 dynamic = ["version"]
-description = "Config-driven ADBC-to-ADBC replication: stream whole schemas from Oracle, PostgreSQL, Snowflake or DuckDB into GizmoSQL, with no data materialised on the client."
+description = "Config-driven ADBC-to-ADBC replication: stream whole schemas from Oracle, PostgreSQL, Snowflake, DuckDB or Hardcharger into GizmoSQL or Hardcharger, with no data materialised on the client."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
 authors = [{ name = "GizmoData LLC", email = "info@gizmodata.com" }]
-keywords = ["adbc", "arrow", "replication", "gizmosql", "duckdb", "oracle", "postgresql", "snowflake", "etl", "elt"]
+keywords = ["adbc", "arrow", "replication", "gizmosql", "hardcharger", "duckdb", "oracle", "postgresql", "snowflake", "etl", "elt"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -40,6 +40,8 @@ postgresql = ["adbc-driver-postgresql>=1.12.0"]
 snowflake = ["adbc-driver-snowflake>=1.11.0"]
 gizmosql = ["adbc-driver-gizmosql>=2.0.15"]
 duckdb = ["duckdb>=1.5.6,<2"]
+# Not in `all` (nor `dev`) until adbc-driver-hardcharger is on PyPI: pip couldn't resolve them.
+hardcharger = ["adbc-driver-hardcharger>=0.1.0"]
 all = [
     "adbc-driver-oracle>=1.0.1",
     "adbc-driver-postgresql>=1.12.0",
@@ -71,11 +73,13 @@ packages = ["src/adbc_replicate"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Snowflake tests need credentials: run them explicitly with -m snowflake.
-addopts = "-m 'not snowflake'"
+# Snowflake tests need credentials: run them explicitly with -m snowflake. Hardcharger tests need
+# adbc-driver-hardcharger (not on PyPI yet) and a Hardcharger server: -m hardcharger.
+addopts = "-m 'not snowflake and not hardcharger'"
 markers = [
     "integration: needs the GizmoSQL, Oracle and PostgreSQL test containers (see docker-compose.yml)",
     "snowflake: needs ADBC_REPLICATE_TEST_SNOWFLAKE_* credentials (CI: main pushes and release tags)",
+    "hardcharger: needs adbc-driver-hardcharger and a Hardcharger server (see docker-compose.yml), plus GizmoSQL, Oracle and PostgreSQL",
 ]
 
 [tool.ruff]

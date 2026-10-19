@@ -18,6 +18,9 @@ def make_source(config) -> Source:
     if config.type == "duckdb":
         from .duckdb import DuckDBSource
         return DuckDBSource(config=config)
+    if config.type == "hardcharger":
+        from .hardcharger import HardchargerSource
+        return HardchargerSource(config=config)
     raise ValueError(f"unknown source type {config.type!r}")
 
 

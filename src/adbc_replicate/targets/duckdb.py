@@ -1,6 +1,7 @@
-"""DuckDB-family targets: GizmoSQL (Arrow Flight SQL over DuckDB) and a local DuckDB file.
+"""DuckDB-family targets: GizmoSQL (Arrow Flight SQL over DuckDB), Hardcharger (DuckDB 2.0 over
+Warp SQL) and a local DuckDB file.
 
-Both speak DuckDB SQL, so catalog introspection, view DDL and sync-state tables are shared;
+All speak DuckDB SQL, so catalog introspection, view DDL and sync-state tables are shared;
 only connecting differs. Loads use ADBC bulk ingest (`adbc_ingest`, mode "replace") inside a
 transaction, so readers keep seeing the previous copy of a table until the new one commits.
 """
@@ -14,6 +15,7 @@ import pyarrow as pa
 
 from ..config import DuckDBTarget as DuckDBConfig
 from ..config import GizmoSQLTarget as GizmoSQLConfig
+from ..config import HardchargerTarget as HardchargerConfig
 from ..sources.base import quote_ident
 
 # Network failures while a result streams in from the source (the source driver's message is
@@ -30,7 +32,7 @@ def is_transient(error: BaseException | str) -> bool:
     opposed to an error in the request."""
     text = str(error)
     return ("(Unavailable;" in text or "connection is draining" in text or "GOAWAY" in text
-            or any(marker in text for marker in _NETWORK_ERRORS))
+            or "(server_draining," in text or any(marker in text for marker in _NETWORK_ERRORS))
 
 
 def _target_unavailable(error: BaseException) -> bool:
@@ -39,8 +41,10 @@ def _target_unavailable(error: BaseException) -> bool:
 
 
 def _failed_before_running(error: BaseException) -> bool:
-    """True when a statement failed while being prepared, so it never ran and can be resent."""
-    return _target_unavailable(error=error) and "Prepare)" in str(error)
+    """True when a statement failed while being prepared, so it never ran and can be resent. A Warp SQL
+    server that is shutting down refuses new statements with 503 server_draining (spec §11.1)."""
+    text = str(error)
+    return (_target_unavailable(error=error) and "Prepare)" in text) or "(server_draining," in text
 
 
 STATEMENT_RETRIES = 3
@@ -210,6 +214,20 @@ class GizmoSQLTarget(DuckDBFamilyTarget):
                                 tls_skip_verify=self.config.tls_skip_verify, db_kwargs=db_kwargs, autocommit=False)
 
 
+class HardchargerTarget(DuckDBFamilyTarget):
+    """Bulk loads go in `ingest_parts` parts at once (Warp SQL partitioned ingest), committed in the
+    connection's transaction like any other statement: a rollback undoes them (checked by the
+    integration tests)."""
+
+    config: HardchargerConfig
+
+    def _open(self):
+        from ..sources.hardcharger import hardcharger_connect
+
+        return hardcharger_connect(config=self.config, autocommit=False,
+                                   db_kwargs={"adbc.hardcharger.ingest.parts": str(self.config.ingest_parts)})
+
+
 class DuckDBTarget(DuckDBFamilyTarget):
     config: DuckDBConfig
 
@@ -224,4 +242,6 @@ def make_target(config) -> DuckDBFamilyTarget:
         return GizmoSQLTarget(config=config)
     if config.type == "duckdb":
         return DuckDBTarget(config=config)
+    if config.type == "hardcharger":
+        return HardchargerTarget(config=config)
     raise ValueError(f"unknown target type {config.type!r}")

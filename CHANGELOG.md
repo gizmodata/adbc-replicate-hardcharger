@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Hardcharger™ as a target and as a source (`type: hardcharger`), through adbc-driver-hardcharger (new
+  extra `hardcharger`; not in `all` until the driver is on PyPI). `hardcharger://` URIs are HTTPS on
+  port 31337 unless `?tls=false`; `tls_root_certs` trusts a private CA. Loads are sent as
+  `ingest_parts` (default 8) parts at once and stay in the target transaction, so readers see the old
+  copy until commit and a failed load rolls back whole. As a source: `consistency` none or serializable
+  (not snapshot), split results, views and fingerprints as for DuckDB, and a hint for `HUGEINT` values
+  of 39 digits or more, which Hardcharger refuses to send as `DECIMAL(38,0)`. A Warp SQL
+  `server_draining` refusal is retried like GizmoSQL's `unavailable`.
+- Tests: `pytest -m hardcharger`, against `ghcr.io/gizmodata/hardcharger:main` (CI job `hardcharger`,
+  which fails, never skips, when the server or driver is missing), including every Arrow type and every
+  DuckDB type compared value by value with DuckDB's own ingest and with the GizmoSQL target.
+
 ### Fixed
 
 - DuckDB source: columns of type `TIMETZ`, `BIT` or `BIGNUM` (alone or nested, e.g. `TIMETZ[]`) are refused

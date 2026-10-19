@@ -1,6 +1,6 @@
 # 🔁 adbc-replicate - by [GizmoData](https://gizmodata.com)™
 
-**Config-driven ADBC-to-ADBC replication: stream whole schemas from Oracle, PostgreSQL, Snowflake or DuckDB into [GizmoSQL](https://gizmodata.com/gizmosql) — with nothing materialized on the client.**
+**Config-driven ADBC-to-ADBC replication: stream whole schemas from Oracle, PostgreSQL, Snowflake, DuckDB or Hardcharger™ into [GizmoSQL](https://gizmodata.com/gizmosql) or [Hardcharger](#-hardcharger-source-and-target) — with nothing materialized on the client.**
 
 [<img src="https://img.shields.io/badge/GitHub-gizmodata%2Fadbc--replicate-blue.svg?logo=Github">](https://github.com/gizmodata/adbc-replicate)
 [![CI](https://github.com/gizmodata/adbc-replicate/actions/workflows/ci.yml/badge.svg)](https://github.com/gizmodata/adbc-replicate/actions/workflows/ci.yml)
@@ -18,8 +18,8 @@ does the rest:
 
 ```mermaid
 flowchart LR
-    S[("Source<br/>Oracle · PostgreSQL<br/>Snowflake · DuckDB")] -- "ADBC<br/>Arrow record batches" --> R["adbc-replicate<br/>rename · coalesce · strip types<br/>(one batch in memory)"]
-    R -- "ADBC bulk ingest<br/>(Flight SQL DoPut)" --> T[("GizmoSQL<br/>tables + translated views")]
+    S[("Source<br/>Oracle · PostgreSQL<br/>Snowflake · DuckDB<br/>Hardcharger")] -- "ADBC<br/>Arrow record batches" --> R["adbc-replicate<br/>rename · coalesce · strip types<br/>(one batch in memory)"]
+    R -- "ADBC bulk ingest<br/>(Flight SQL DoPut, Warp SQL parts)" --> T[("GizmoSQL · Hardcharger<br/>tables + translated views")]
     R -. "sync state, run log" .-> T
 ```
 
@@ -33,7 +33,7 @@ like [Vaden Automotive](https://gizmodata.com/case-studies/vaden-automotive).
 
 ## ✨ Features
 
-- 🔌 **Sources:** Oracle ([adbc-driver-oracle](https://github.com/gizmodata/adbc-driver-oracle) — no Oracle Client needed), PostgreSQL, Snowflake, DuckDB. **Targets:** GizmoSQL, DuckDB.
+- 🔌 **Sources:** Oracle ([adbc-driver-oracle](https://github.com/gizmodata/adbc-driver-oracle) — no Oracle Client needed), PostgreSQL, Snowflake, DuckDB, Hardcharger. **Targets:** GizmoSQL, Hardcharger, DuckDB.
 - 🎯 **Selection by pattern:** db_schemas, tables and views by case-insensitive glob (`SALES_*`) or `/regex/`, with excludes, per-rule target db_schema renames, and views that can be *materialized* as tables.
 - 🔒 **Column filtering and masking:** exclude or allow-list columns; mask them with `null`, `hash` (salted SHA-256), `redact` or any SQL expression. **Masks run inside the source database**, so the raw values never cross the network — and a mask rule that matches nothing fails the run instead of silently leaking a typo'd column.
 - 📸 **Consistent snapshots:** every table read from one point in time — `serializable` (one transaction) or `snapshot` (parallel workers sharing an Oracle SCN, a PostgreSQL exported snapshot, or a Snowflake time-travel timestamp). Foreign keys line up.
@@ -200,8 +200,9 @@ Clean up with `docker rm --force replicate-demo-postgres replicate-demo-gizmosql
 | Container image (linux/amd64, linux/arm64) | `docker pull ghcr.io/gizmodata/adbc-replicate:latest` |
 | Helm chart (scheduled CronJob) | `helm install my-replication oci://ghcr.io/gizmodata/charts/adbc-replicate --values values.yaml` |
 
-Extras: `oracle`, `postgresql`, `snowflake`, `gizmosql`, `duckdb`, `all`. On Python 3.15,
-`all` leaves out `duckdb` until DuckDB publishes 3.15 wheels.
+Extras: `oracle`, `postgresql`, `snowflake`, `gizmosql`, `duckdb`, `hardcharger`, `all`. On Python 3.15,
+`all` leaves out `duckdb` until DuckDB publishes 3.15 wheels. `hardcharger` (adbc-driver-hardcharger)
+isn't part of `all` yet: install it alongside, e.g. `pip install "adbc-replicate[all,hardcharger]"`.
 
 ## 🧭 The command line
 
@@ -649,6 +650,80 @@ objects:
 - `UUID`, `JSON` and `ENUM` arrive as text, `HUGEINT` as `DECIMAL(38,0)`.
 </details>
 
+## 🏎️ Hardcharger (source and target)
+
+[Hardcharger](https://github.com/gizmodata/hardcharger) is GizmoData's DuckDB 2.0 server, spoken to over
+the Warp SQL protocol (HTTP) through
+[adbc-driver-hardcharger](https://github.com/gizmodata/hardcharger-adbc)
+(`pip install "adbc-replicate[hardcharger]"`). It works as a target and as a source, in any pairing
+with the others, Hardcharger to Hardcharger included.
+
+```yaml
+version: 1
+name: postgres-to-hardcharger
+source:
+  type: postgresql
+  uri: postgresql://pg.example.com:5432/app
+  username: ${PGUSER}
+  password: ${PGPASSWORD}
+  consistency: snapshot
+target:
+  type: hardcharger
+  uri: hardcharger://hardcharger.example.com      # HTTPS, port 31337
+  username: ${HARDCHARGER_USERNAME}
+  password: ${HARDCHARGER_PASSWORD}
+  tls_root_certs: /etc/ssl/certs/private-ca.pem   # only for a server certificate from a private CA
+  ingest_parts: 8                                 # the default
+objects:
+  - db_schemas: [public, billing]
+parallelism: 4
+```
+
+```yaml
+version: 1
+name: hardcharger-to-duckdb
+source:
+  type: hardcharger
+  uri: hardcharger://hardcharger.example.com
+  username: ${HARDCHARGER_USERNAME}
+  password: ${HARDCHARGER_PASSWORD}
+  consistency: serializable          # none (default) | serializable
+target:
+  type: duckdb
+  path: ./local-copy.duckdb
+objects:
+  - db_schemas: [public, billing]
+```
+
+- **Connections.** `hardcharger://host` is HTTPS on port 31337; `hardcharger://host:port` picks another
+  port and `hardcharger://host?tls=false` is plain HTTP (development only). `tls_root_certs` trusts a
+  private CA (a PEM file), `tls_skip_verify` skips verification (development only), and any
+  `adbc.hardcharger.*` / `adbc.warp.*` driver option goes in `options`.
+- **Loads.** Each table's rows go up as `ingest_parts` parts at once, each over its own connection
+  (Warp SQL partitioned ingest), into the run's target transaction like any other statement: readers
+  keep the previous copy until it commits, and a failed or interrupted load rolls back, parts and all.
+  Rows land in no defined order; `ingest_parts: 1` sends one stream in the source's order.
+- **Incremental loads** merge with DuckDB 2.0's `MERGE`, which refuses several changed rows with one key
+  (DuckDB 1.5 applied one of them); adbc-replicate counts repeated keys first either way and copies such
+  a table whole. `CHECKPOINT` needs the admin role, as on GizmoSQL (a failure is only a warning).
+- **As a source**, a large result arrives split into partitions read at once. `consistency: serializable`
+  reads every table in one transaction; `snapshot` isn't offered (DuckDB can't share a snapshot between
+  connections). Views are read from `duckdb_views()`, and change detection fingerprints in the server,
+  as for a DuckDB file. Hardcharger sends `HUGEINT`/`UHUGEINT` as `DECIMAL(38,0)` and refuses a value of
+  39 digits or more instead of sending it wrong; copy such a column as text with
+  `mask: {COL: {strategy: expression, sql: "CAST({column} AS VARCHAR)"}}`.
+- **Types** are checked value by value against a real server by the test suite: Hardcharger stores
+  every Arrow type exactly as DuckDB's own ingest does (an all-NULL Arrow `null` column becomes
+  `VARCHAR`). Where GizmoSQL 1.x stores the same data as text or rounds it, Hardcharger keeps the type:
+  `TIME_NS` (GizmoSQL rounds to microseconds), `INTERVAL`, `UNION`, `UUID` and `JSON` (as Arrow
+  extension types), `decimal32`/`decimal64`, binary views, fixed-size binary and list views. Arrow
+  `float16` and `decimal256` have no DuckDB column and are refused. From a Hardcharger source, as from a
+  DuckDB file, `UUID`, `JSON` and `ENUM` arrive as text and `HUGEINT` as `DECIMAL(38,0)`, and `TIMETZ`,
+  `BIT` and `BIGNUM` columns are refused unless masked or excluded (see the DuckDB source above).
+- **Known limit (Hardcharger 0.3.0):** the server refuses any SQL string literal containing `{` (a JSON
+  object, a regular expression such as `'^[0-9]{3}$'`) as a credential path, so a view or mask
+  expression with one fails there. Bound parameters are not affected.
+
 ## ☸️ Run it on Kubernetes
 
 The Helm chart runs `adbc-replicate run` as a CronJob (`concurrencyPolicy: Forbid`, so runs
@@ -729,13 +804,19 @@ docker compose up --detach --wait          # GizmoSQL, Oracle and PostgreSQL tes
 pytest tests/integration -m integration    # real servers; an unreachable server FAILS, never skips
 ```
 
+The Hardcharger tests (`pytest -m hardcharger`) need adbc-driver-hardcharger (`pip install
+"adbc-replicate[hardcharger]"`, or built from its repository) and the `hardcharger` service of
+`docker-compose.yml`, plus the others for sources and comparisons. Their server is
+`ADBC_REPLICATE_TEST_HARDCHARGER_URI` (default `hardcharger://127.0.0.1:31387?tls=false`), with
+`ADBC_REPLICATE_TEST_HARDCHARGER_USERNAME` / `_PASSWORD`.
+
 The Snowflake tests (`pytest -m snowflake`) read `SNOWFLAKE_SAMPLE_DATA.TPCH_SF1`, so the test
 user needs nothing beyond the PUBLIC role, and they need `ADBC_REPLICATE_TEST_SNOWFLAKE_ACCOUNT`,
 `ADBC_REPLICATE_TEST_SNOWFLAKE_PRIVATE_KEY` and, for an encrypted key,
 `ADBC_REPLICATE_TEST_SNOWFLAKE_PRIVATE_KEY_PASSPHRASE` (user and warehouse default to
 `ADBC_REPLICATE_CI` and `SNOWFLAKE_LEARNING_WH`; override with `..._USER` / `..._WAREHOUSE`). Every release runs the whole suite — unit
 tests on Python 3.11–3.14, the oldest allowed dependency versions, integration tests against
-real GizmoSQL, Oracle and PostgreSQL (also on Python 3.15), Snowflake, a Docker end-to-end run
+real GizmoSQL, Oracle and PostgreSQL (also on Python 3.15), Hardcharger, Snowflake, a Docker end-to-end run
 and the Helm chart — on the tagged commit before anything is published.
 
 ## 🙏 Inspiration
@@ -751,7 +832,8 @@ and adbc-replicate's CLI style owes it a nod. No code is shared between the proj
 Oracle is a registered trademark of Oracle Corporation; Snowflake is a trademark of
 Snowflake Inc.; PostgreSQL is a trademark of the PostgreSQL Community Association.
 **adbc-replicate is not affiliated with, endorsed by, or sponsored by any of them.** These
-names identify the systems it interoperates with.
+names identify the systems it interoperates with. Hardcharger™ and GizmoData™ are trademarks of
+GizmoData LLC.
 
 ## License
 
