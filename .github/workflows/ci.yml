@@ -151,19 +151,6 @@ jobs:
               git config --global --add url."git@github.com-$repo:gizmodata/$repo".insteadOf "$from"
             done
           done
-      - name: Hardcharger server (${{ env.HARDCHARGER_IMAGE }})
-        env:
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin > /dev/null
-          if ! docker pull -q "$HARDCHARGER_IMAGE"; then
-            echo "::error::can't pull $HARDCHARGER_IMAGE with this workflow's GITHUB_TOKEN: grant $GITHUB_REPOSITORY read access to the hardcharger package (package settings, Manage Actions access)"
-            exit 1
-          fi
-          docker run -d --name hardcharger -p 127.0.0.1:31387:31337 \
-            -e HARDCHARGER_ADMIN_USERNAME=hardcharger -e HARDCHARGER_ADMIN_PASSWORD=hardcharger \
-            -e HARDCHARGER_DATABASE=/tmp/target.duckdb "$HARDCHARGER_IMAGE"
-          docker run --rm "$HARDCHARGER_IMAGE" --version
       - name: adbc-driver-hardcharger source (gizmodata/hardcharger-adbc ${{ env.HARDCHARGER_ADBC_COMMIT }})
         run: |
           src="$RUNNER_TEMP/hardcharger-adbc"
@@ -186,6 +173,19 @@ jobs:
             -o ../python/src/adbc_driver_hardcharger/libadbc_driver_hardcharger.so ./pkg/hardcharger)
           pip install -e ".[dev]" "$HARDCHARGER_ADBC_SRC/python"
           python -c "import adbc_driver_hardcharger; print('adbc-driver-hardcharger', adbc_driver_hardcharger.__version__)"
+      - name: Hardcharger server (${{ env.HARDCHARGER_IMAGE }})
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin > /dev/null
+          if ! docker pull -q "$HARDCHARGER_IMAGE"; then
+            echo "::error::can't pull $HARDCHARGER_IMAGE with this workflow's GITHUB_TOKEN: grant $GITHUB_REPOSITORY read access to the hardcharger package (package settings, Manage Actions access)"
+            exit 1
+          fi
+          docker run -d --name hardcharger -p 127.0.0.1:31387:31337 \
+            -e HARDCHARGER_ADMIN_USERNAME=hardcharger -e HARDCHARGER_ADMIN_PASSWORD=hardcharger \
+            -e HARDCHARGER_DATABASE=/tmp/target.duckdb "$HARDCHARGER_IMAGE"
+          docker run --rm "$HARDCHARGER_IMAGE" --version
       # An unreachable server FAILS these tests (never skips), and pytest exits 5 if nothing ran.
       - run: pytest tests/integration -m hardcharger -v
       - name: Hardcharger server log
