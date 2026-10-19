@@ -43,7 +43,7 @@ class _SourceBase(_Model):
         description="none: each table is read as of its own query. serializable: every table is read "
                     "in one transaction on one connection (forces parallelism 1). snapshot: every "
                     "worker reads the same point in time (Oracle AS OF SCN, PostgreSQL exported "
-                    "snapshot, Snowflake time travel).",
+                    "snapshot, Snowflake time travel; not DuckDB or Hardcharger).",
     )
 
 
@@ -98,8 +98,27 @@ class DuckDBSource(_SourceBase):
     path: str = Field(default=":memory:", description="DuckDB database file.")
 
 
+class _HardchargerConnection(_Model):
+    """How to reach a Hardcharger server (DuckDB 2.0 over the Warp SQL protocol), as a source or a target."""
+
+    uri: str = Field(description="e.g. hardcharger://host (HTTPS on port 31337), hardcharger://host:port, or "
+                                 "hardcharger://host?tls=false for plain HTTP (development)")
+    username: str | None = None
+    password: str | None = None
+    tls_skip_verify: bool = Field(default=False,
+                                  description="Don't verify the server's certificate (development only).")
+    tls_root_certs: str | None = Field(
+        default=None,
+        description="CA certificates to trust instead of the system's, as a PEM file path (or PEM text).",
+    )
+
+
+class HardchargerSource(_HardchargerConnection, _SourceBase):
+    type: Literal["hardcharger"]
+
+
 SourceConfig = Annotated[
-    OracleSource | PostgresSource | SnowflakeSource | DuckDBSource,
+    OracleSource | PostgresSource | SnowflakeSource | DuckDBSource | HardchargerSource,
     Field(discriminator="type"),
 ]
 
@@ -109,7 +128,7 @@ class _TargetBase(_Model):
     checkpoint: bool = Field(
         default=True,
         description="Run CHECKPOINT before and after a load so the WAL is folded into the database "
-                    "file. Needs the admin role on GizmoSQL; a failure is only a warning.",
+                    "file. Needs the admin role on GizmoSQL and Hardcharger; a failure is only a warning.",
     )
 
 
@@ -134,7 +153,19 @@ class DuckDBTarget(_TargetBase):
     catalog: str | None = None
 
 
-TargetConfig = Annotated[GizmoSQLTarget | DuckDBTarget, Field(discriminator="type")]
+class HardchargerTarget(_HardchargerConnection, _TargetBase):
+    type: Literal["hardcharger"]
+    catalog: str | None = Field(default=None, description="Target catalog (attached database) to load into. "
+                                       "Default: the server's current catalog.")
+    ingest_parts: int = Field(
+        default=8, ge=1, le=256,
+        description="A table's upload is sent as up to this many parts at once, each over its own connection, "
+                    "and committed as one (adbc.hardcharger.ingest.parts). Rows land in no defined order; "
+                    "1 sends one stream in the source's order.",
+    )
+
+
+TargetConfig = Annotated[GizmoSQLTarget | DuckDBTarget | HardchargerTarget, Field(discriminator="type")]
 
 
 # ---- What to replicate ------------------------------------------------------------------
@@ -404,8 +435,9 @@ class ReplicationConfig(_Model):
             raise ValueError("consistency 'serializable' reads every table in one transaction on one "
                              "connection, so parallelism must be 1 (use consistency 'snapshot' to copy "
                              "tables in parallel from one point in time)")
-        if self.source.consistency == "snapshot" and self.source.type == "duckdb":
-            raise ValueError("consistency 'snapshot' isn't supported for a DuckDB source")
+        if self.source.consistency == "snapshot" and self.source.type in ("duckdb", "hardcharger"):
+            raise ValueError(f"consistency 'snapshot' isn't supported for a {self.source.type} source (DuckDB "
+                             "can't share one snapshot between connections): use serializable")
         if self.ingest.batch_bytes * 2 > getattr(self.target, "max_msg_size", 1 << 62):
             raise ValueError("target.max_msg_size must be at least twice ingest.batch_bytes")
         return self

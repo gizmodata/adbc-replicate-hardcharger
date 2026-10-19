@@ -4,7 +4,7 @@ Project notes for Claude and other contributors.
 
 ## What this is
 
-`adbc-replicate`: config-driven ADBC → ADBC replication into GizmoSQL (or DuckDB). Python;
+`adbc-replicate`: config-driven ADBC → ADBC replication into GizmoSQL or Hardcharger (or DuckDB). Python;
 the data path is Arrow C streams between drivers (`fetch_record_batch` → `adbc_ingest`), so
 Python never touches rows. It generalizes per-customer jobs like
 the Snowflake → GizmoSQL loader behind the Vaden Automotive case study (its lessons are
@@ -20,12 +20,14 @@ src/adbc_replicate/config.py      pydantic models = the config contract (+ JSON 
 src/adbc_replicate/planner.py     rules + source catalog -> Plan (tables, views, name_map)
 src/adbc_replicate/engine.py      run: consistency, parallel copies, change detection, views
 src/adbc_replicate/sources/*.py   one plugin per database (base.py is the interface)
-src/adbc_replicate/targets/       DuckDB-family targets (GizmoSQL, DuckDB)
+src/adbc_replicate/targets/       DuckDB-family targets (GizmoSQL, Hardcharger, DuckDB)
 src/adbc_replicate/views.py       sqlglot translation (Oracle rewrites, name re-pointing)
 src/adbc_replicate/state.py       sync state / run log tables in the target
 tests/unit                        no servers; DuckDB -> DuckDB engine tests, README YAML check
 tests/integration                 real GizmoSQL + Oracle + PostgreSQL (docker-compose.yml);
-                                  Snowflake tests are marker `snowflake` (need credentials)
+                                  Snowflake tests are marker `snowflake` (need credentials);
+                                  Hardcharger tests are marker `hardcharger` (driver built from
+                                  gizmodata/hardcharger-adbc in CI until it is on PyPI)
 charts/adbc-replicate             Helm CronJob
 ```
 
@@ -99,3 +101,13 @@ charts/adbc-replicate             Helm CronJob
 - DuckDB's Arrow export silently changes TIMETZ (drops the offset), BIT and BIGNUM (internal bytes), also
   nested. `Source.lossy_type()` names such types and the planner refuses them unmasked (`lossy_duckdb_type`
   matches type names only, never STRUCT field names like `"bit"`).
+- Hardcharger (DuckDB 2.0, Warp SQL): bulk ingest, partitioned or not, joins the session's transaction
+  (rollback undoes it); `test_ingest_parts_roll_back_with_the_transaction` proves it through a recording
+  proxy. DuckDB 2.0 `MERGE` refuses several source rows per key (1.5.6 picked one); `merge()` checks first
+  either way. Hardcharger refuses a HUGEINT >= 10^38 instead of sending it (1.5/GizmoSQL send an
+  out-of-range decimal128). An Arrow `null` column becomes VARCHAR (DuckDB: its NULL type).
+- Hardcharger 0.3.0's sensitive-path guard refuses any SQL string literal containing `{` (`'{"a": 1}'`,
+  `'^[0-9]{3}$'`) as a "user credential store" path; bound parameters pass. Tests build JSON with
+  `json_object()` instead.
+- `typeof(x)` in a probe: a column named like a keyword (`null`, `binary`) parses as the keyword, not the
+  column. Probe types with a neutral column name (`v`).

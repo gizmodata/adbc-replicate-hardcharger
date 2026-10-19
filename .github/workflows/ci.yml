@@ -109,6 +109,89 @@ jobs:
       # An unreachable service FAILS these tests (never skips), and pytest exits 5 if nothing ran.
       - run: pytest tests/integration -m integration -v
 
+  hardcharger:
+    # Hardcharger™ as a target and a source, against Hardcharger's main branch. Until Hardcharger is announced
+    # its pieces are internal, reached without a personal token:
+    #   - ghcr.io/gizmodata/hardcharger, pulled with this workflow's GITHUB_TOKEN: the package must grant this
+    #     repository read access (package settings, Manage Actions access).
+    #   - adbc-driver-hardcharger (not on PyPI yet), built here from gizmodata/hardcharger-adbc at a pinned
+    #     commit; its Go module needs gizmodata/warp-sql-adbc. Each is fetched with a read-only deploy key of
+    #     that repository, kept here as a secret (DEPLOY_KEY_HARDCHARGER_ADBC, DEPLOY_KEY_WARP_SQL_ADBC).
+    # Anything missing FAILS this job; nothing is skipped.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    services: *services
+    env:
+      HARDCHARGER_IMAGE: ghcr.io/gizmodata/hardcharger:main
+      HARDCHARGER_ADBC_COMMIT: 9a087bed2bc4ed3b514624c20228e705eaa65355
+      GOPRIVATE: github.com/gizmodata/*
+    steps:
+      - uses: actions/checkout@v7
+      - name: Deploy keys for the internal repositories
+        env:
+          DEPLOY_KEY_HARDCHARGER_ADBC: ${{ secrets.DEPLOY_KEY_HARDCHARGER_ADBC }}
+          DEPLOY_KEY_WARP_SQL_ADBC: ${{ secrets.DEPLOY_KEY_WARP_SQL_ADBC }}
+        run: |
+          # One SSH host alias per repository, each with its own key; git (and so Go's module fetches)
+          # rewrites every spelling of that repository's URL to its alias.
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          for repo in hardcharger-adbc warp-sql-adbc; do
+            var="DEPLOY_KEY_$(echo "$repo" | tr 'a-z-' 'A-Z_')"
+            key="${!var}"
+            if [ -z "$key" ]; then
+              echo "::error::the $var secret is not set: the private key of a read-only deploy key of gizmodata/$repo"
+              exit 1
+            fi
+            printf '%s\n' "$key" > ~/.ssh/"$repo" && chmod 600 ~/.ssh/"$repo"
+            printf 'Host github.com-%s\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/%s\n  IdentitiesOnly yes\n' "$repo" "$repo" >> ~/.ssh/config
+            for from in "https://github.com/gizmodata/$repo" "ssh://git@github.com/gizmodata/$repo" "git@github.com:gizmodata/$repo"; do
+              git config --global --add url."git@github.com-$repo:gizmodata/$repo".insteadOf "$from"
+            done
+          done
+      - name: adbc-driver-hardcharger source (gizmodata/hardcharger-adbc ${{ env.HARDCHARGER_ADBC_COMMIT }})
+        run: |
+          src="$RUNNER_TEMP/hardcharger-adbc"
+          git init --quiet "$src"
+          git -C "$src" remote add origin git@github.com:gizmodata/hardcharger-adbc.git
+          git -C "$src" fetch --quiet --depth 1 origin "$HARDCHARGER_ADBC_COMMIT"
+          git -C "$src" checkout --quiet FETCH_HEAD
+          test "$(git -C "$src" rev-parse HEAD)" = "$HARDCHARGER_ADBC_COMMIT"
+          echo "HARDCHARGER_ADBC_SRC=$src" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: ${{ runner.temp }}/hardcharger-adbc/go/go.mod
+          cache: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Install adbc-replicate and the driver
+        run: |
+          (cd "$HARDCHARGER_ADBC_SRC/go" && CGO_ENABLED=1 go build -tags driverlib -buildmode=c-shared \
+            -o ../python/src/adbc_driver_hardcharger/libadbc_driver_hardcharger.so ./pkg/hardcharger)
+          pip install -e ".[dev]" "$HARDCHARGER_ADBC_SRC/python"
+          python -c "import adbc_driver_hardcharger; print('adbc-driver-hardcharger', adbc_driver_hardcharger.__version__)"
+      - name: Hardcharger server (${{ env.HARDCHARGER_IMAGE }})
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin > /dev/null
+          if ! docker pull -q "$HARDCHARGER_IMAGE"; then
+            echo "::error::can't pull $HARDCHARGER_IMAGE with this workflow's GITHUB_TOKEN: grant $GITHUB_REPOSITORY read access to the hardcharger package (package settings, Manage Actions access)"
+            exit 1
+          fi
+          docker run -d --name hardcharger -p 127.0.0.1:31387:31337 \
+            -e HARDCHARGER_ADMIN_USERNAME=hardcharger -e HARDCHARGER_ADMIN_PASSWORD=hardcharger \
+            -e HARDCHARGER_DATABASE=/tmp/target.duckdb "$HARDCHARGER_IMAGE"
+          docker run --rm "$HARDCHARGER_IMAGE" --version
+      # An unreachable server FAILS these tests (never skips), and pytest exits 5 if nothing ran.
+      - run: pytest tests/integration -m hardcharger -v
+      - name: Hardcharger server log
+        if: failure()
+        run: docker logs hardcharger 2>&1 | tail -200
+
   python-3-15:
     # Python 3.15 is brand new: adbc-driver-manager and pyyaml build from source here, and DuckDB
     # has no 3.15 wheels yet, so this job covers the Oracle / PostgreSQL → GizmoSQL path.
