@@ -1,3 +1,5 @@
+> **Internal staging mirror of [gizmodata/adbc-replicate](https://github.com/gizmodata/adbc-replicate) until Hardcharger's announcement.** Hardcharger work lands here first (branch `feat/hardcharger`) and goes to the public repository only when Hardcharger is announced. Don't push it there before then.
+
 # 🔁 adbc-replicate - by [GizmoData](https://gizmodata.com)™
 
 **Config-driven ADBC-to-ADBC replication: stream whole schemas from Oracle, PostgreSQL, Snowflake or DuckDB into [GizmoSQL](https://gizmodata.com/gizmosql) — with nothing materialized on the client.**
