@@ -344,11 +344,13 @@ def proxied(tmp_path):
     target = {"type": "hardcharger", "uri": f"hardcharger://127.0.0.1:{port}?tls=false",
               "username": HARDCHARGER_USERNAME, "password": HARDCHARGER_PASSWORD}
 
-    def requests() -> tuple[int, int, int]:
+    def requests() -> tuple[tuple[int, int, int], list[str]]:
+        """(single ingests, partitioned ingests opened, distinct parts), and the raw log. Distinct paths: the
+        driver re-sends a request whose answer was lost (with its Idempotency-Key), and each try is logged."""
         lines = log.read_text().splitlines()
-        return (sum(1 for r in lines if r.startswith("POST ") and r.endswith("/ingest")),
-                sum(1 for r in lines if r.startswith("POST ") and r.endswith("/ingests")),
-                sum(1 for r in lines if r.startswith("POST ") and "/parts/" in r))
+        posts = {r for r in lines if r.startswith("POST ")}
+        return (sum(1 for r in posts if r.endswith("/ingest")), sum(1 for r in posts if r.endswith("/ingests")),
+                sum(1 for r in posts if "/parts/" in r)), lines
 
     yield target, requests
     process.kill()
@@ -377,7 +379,8 @@ def test_ingest_parts_roll_back_with_the_transaction(proxied, hardcharger, prefi
         conn.commit()
         assert target.ingest(conn=conn, db_schema="main", table=table, reader=batches(rows=200_000,
                                                                                       batch_rows=20_000)) == 200_000
-        assert requests() == expected
+        counts, lines = requests()
+        assert counts == expected, lines
         assert query(conn=hardcharger, sql=f"SELECT count(*) FROM {table}") == [(1,)]     # not committed yet
         assert query(conn=conn, sql=f"SELECT count(*), count(DISTINCT id) FROM {table}") == [(200_000, 200_000)]
         conn.rollback()
