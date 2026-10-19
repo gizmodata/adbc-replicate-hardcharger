@@ -230,6 +230,7 @@ jobs:
       - run: >-
           pytest tests/integration -m integration -v --ignore=tests/integration/test_duckdb_source.py
           --ignore=tests/integration/test_lossy_duckdb_types.py --ignore=tests/integration/test_hardcharger.py
+          --deselect=tests/integration/test_readme_examples.py::test_duckdb_source_and_lossy_columns
 
   snowflake:
     # Needs credentials, so it doesn't run for pull requests (fork PRs get no secrets). Everywhere

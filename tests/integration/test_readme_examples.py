@@ -19,7 +19,6 @@ import threading
 import uuid
 from pathlib import Path
 
-import duckdb
 import pytest
 import yaml
 from conftest import (
@@ -301,6 +300,8 @@ def test_postgresql_source(postgres_examples, hardcharger, monkeypatch):
 
 
 def test_duckdb_source_and_lossy_columns(hardcharger, monkeypatch, tmp_path):
+    import duckdb  # not at module level: Python 3.15 has no DuckDB wheels yet (CI deselects this test there)
+
     path = tmp_path / "analytics.duckdb"
     con = duckdb.connect(database=str(path))
     con.execute(query="CREATE TABLE main.events (id INTEGER, local_time TIMETZ, flags BIT, name VARCHAR); "
