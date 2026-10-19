@@ -125,7 +125,7 @@ jobs:
     services: *services
     env:
       HARDCHARGER_IMAGE: ghcr.io/gizmodata/hardcharger:main
-      HARDCHARGER_ADBC_COMMIT: 9a087be3a3390a883ee7d61d1d4cf44b76669ab6
+      HARDCHARGER_ADBC_COMMIT: 9a087bed2bc4ed3b514624c20228e705eaa65355
       GOPRIVATE: github.com/gizmodata/*
     steps:
       - uses: actions/checkout@v7
