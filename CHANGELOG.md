@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- The README banner is the new Hardcharger™ logo, the bull mascot lockup in a light and a dark
+  version that follows the reader's color scheme, in place of the GizmoData banner card.
+
 ## [0.1.0] - 2026-10-19
 
 The first release of adbc-replicate-hardcharger: config-driven ADBC-to-ADBC replication into

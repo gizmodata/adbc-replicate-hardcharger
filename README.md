@@ -1,3 +1,12 @@
+<p align="center">
+  <a href="https://github.com/gizmodata/hardcharger">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hardcharger-banner-dark.png">
+      <img src="docs/assets/hardcharger-banner-light.png" alt="Hardcharger™" width="400">
+    </picture>
+  </a>
+</p>
+
 # 🔁 adbc-replicate-hardcharger - by [GizmoData™](https://gizmodata.com)
 
 **Config-driven ADBC-to-ADBC replication into [Hardcharger™](https://github.com/gizmodata/hardcharger): stream whole schemas from Oracle, PostgreSQL, Snowflake, DuckDB or another Hardcharger, with nothing materialized on the client.**
