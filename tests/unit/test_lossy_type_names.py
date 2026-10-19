@@ -3,7 +3,7 @@ never a STRUCT field name. No DuckDB needed, so this also runs where DuckDB has 
 
 import pytest
 
-from adbc_replicate.sources.duckdb import lossy_duckdb_type
+from adbc_replicate_hardcharger.sources.duckdb import lossy_duckdb_type
 
 
 @pytest.mark.parametrize(("data_type", "lossy"), [

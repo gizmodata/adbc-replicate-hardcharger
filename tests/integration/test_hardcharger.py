@@ -1,12 +1,10 @@
-"""Hardcharger™ (DuckDB 2.0 over Warp SQL, through adbc-driver-hardcharger) as a target and as a source,
-against a real server (ghcr.io/gizmodata/hardcharger:main; see docker-compose.yml).
-
-Marked `hardcharger` rather than `integration`: the driver isn't on PyPI yet, so CI builds it in a job of
-its own. There, as everywhere, an unreachable server is a failure, never a skip.
+"""What is particular to Hardcharger™ (DuckDB 2.0 over Warp SQL, through adbc-driver-hardcharger), against
+a real server (ghcr.io/gizmodata/hardcharger:main; see docker-compose.yml): types, partitioned ingest and
+transactions, MERGE, and Hardcharger as a source.
 
 Types are checked by value, not just by name: every Arrow type is ingested into Hardcharger and into
-DuckDB's own ADBC ingest (the reference), and every DuckDB type is replicated through the engine; the
-GizmoSQL target gets the same input so the differences between the two servers are pinned here.
+DuckDB's own ADBC ingest (the reference), and every DuckDB type is replicated through the engine, from a
+DuckDB file into Hardcharger and from Hardcharger into Hardcharger.
 """
 
 from __future__ import annotations
@@ -15,7 +13,6 @@ import datetime as dt
 import decimal
 import subprocess
 import sys
-import time
 import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -26,30 +23,25 @@ from conftest import (
     HARDCHARGER_PASSWORD,
     HARDCHARGER_URI,
     HARDCHARGER_USERNAME,
-    ORACLE_SYSTEM_PASSWORD,
-    ORACLE_USERNAME,
     execute,
-    gizmosql_connect,
     hardcharger_connect,
     hardcharger_source,
     hardcharger_target,
     make_config,
-    oracle_connect,
-    oracle_source,
     postgres_source,
     query,
     run,
 )
 
-from adbc_replicate.config import parse_config
-from adbc_replicate.engine import EXIT_FAILED, EXIT_OK
-from adbc_replicate.planner import PlanError
-from adbc_replicate.sources import make_source
-from adbc_replicate.sources.duckdb import duckdb_connect
-from adbc_replicate.targets import make_target
-from adbc_replicate.targets.duckdb import DuplicateKeyError
+from adbc_replicate_hardcharger.config import parse_config
+from adbc_replicate_hardcharger.engine import EXIT_FAILED, EXIT_OK
+from adbc_replicate_hardcharger.planner import PlanError
+from adbc_replicate_hardcharger.sources import make_source
+from adbc_replicate_hardcharger.sources.duckdb import duckdb_connect
+from adbc_replicate_hardcharger.targets import make_target
+from adbc_replicate_hardcharger.targets.hardcharger import DuplicateKeyError
 
-pytestmark = pytest.mark.hardcharger
+pytestmark = pytest.mark.integration
 
 D = decimal.Decimal
 
@@ -104,108 +96,72 @@ EXPECTED_TYPES = {
 AS_TEXT = {"strategy": "expression", "sql": "CAST({column} AS VARCHAR)"}
 LOSSY = ("bt", "tmtz", "bn")
 AS_TEXT_RULE = [{"tables": ["every"], "mask": dict.fromkeys(LOSSY, AS_TEXT)}]
-# Where GizmoSQL v1.41's ingest stores the same Arrow data differently from DuckDB and Hardcharger:
-# TIME_NS as TIME (rounded to microseconds), INTERVAL (month_day_nano) and UNION as VARCHAR.
-GIZMOSQL_DIFFERS = {"tmns": "TIME", "iv": "VARCHAR", "un": "VARCHAR"}
 
 COLUMNS = ["id", "b", "ti", "si", "i", "bi", "hi", "uti", "usi", "ui", "ubi", "uhi", "f", "d", "dec", "dec38", "s",
            "bl", "bt", "dt", "tm", "tmns", "tmtz", "ts", "tss", "tsms", "tsns", "tstz", "iv", "u", "j", "e", "l", "arr",
            "st", "m", "un", "bn"]
 
 
-def assert_round_trip(source_conn, source_table: str, targets: dict, prefix: str) -> dict:
-    """Compare each column in each target (name -> (conn, table)) with the source; return {target: {column:
-    (type, values)}} of what differed from the Hardcharger target."""
-    source = {c: typed_values(conn=source_conn, table=source_table, column=c) for c in COLUMNS}
-    got = {name: {c: typed_values(conn=conn, table=table, column=c) for c in COLUMNS}
-           for name, (conn, table) in targets.items()}
-    hc = got["hardcharger"]
+def assert_copied_exactly(source_conn, source_table: str, target_conn, target_table: str) -> None:
+    """Each column's type is the source's (or EXPECTED_TYPES') and its values, as DuckDB text, the source's."""
     for column in COLUMNS:
-        source_type, source_values = source[column]
-        assert hc[column][0] == EXPECTED_TYPES.get(column, source_type), (column, hc[column], source[column])
-        assert hc[column][1] == source_values, (column, hc[column], source[column])
-    for name, columns in got.items():
-        if name in ("hardcharger", "gizmosql"):
-            continue
-        assert columns == hc, name          # a DuckDB file target gets exactly what Hardcharger does
-    return got
+        source = typed_values(conn=source_conn, table=source_table, column=column)
+        copied = typed_values(conn=target_conn, table=target_table, column=column)
+        assert copied[0] == EXPECTED_TYPES.get(column, source[0]), (column, copied, source)
+        assert copied[1] == source[1], (column, copied, source)
 
 
-def test_every_duckdb_type_replicates_into_hardcharger_by_value(hardcharger, gizmosql, tmp_path, prefix):
+def test_every_duckdb_type_replicates_into_hardcharger_by_value(hardcharger, tmp_path, prefix):
     path = tmp_path / "every.duckdb"
     src = duckdb_file(path=path)
     execute(conn=src, statements=["CREATE SCHEMA app", EVERY_DDL.format(table="app.every"),
                                   EVERY_ROWS.format(table="app.every")])
     src.commit()
     src.close()
-    objects = [{"db_schemas": ["app"], "target_db_schema": f"{prefix}_app"}]
-    copy = tmp_path / "copy.duckdb"
-    for target in (hardcharger_target(), {"type": "duckdb", "path": str(copy)}, None):
-        summary, out = run(config=make_config(prefix=prefix, source={"type": "duckdb", "path": str(path)},
-                                              objects=objects, target=target, columns=AS_TEXT_RULE))
-        assert summary.exit_code == EXIT_OK and summary.stats["tables_copied"] == 1, out
-    src, file_target = duckdb_file(path=path), duckdb_file(path=copy)
+    summary, out = run(config=make_config(prefix=prefix, source={"type": "duckdb", "path": str(path)},
+                                          objects=[{"db_schemas": ["app"], "target_db_schema": f"{prefix}_app"}],
+                                          columns=AS_TEXT_RULE))
+    assert summary.exit_code == EXIT_OK and summary.stats["tables_copied"] == 1, out
+    src = duckdb_file(path=path)
     try:
-        got = assert_round_trip(source_conn=src, source_table="app.every", prefix=prefix, targets={
-            "hardcharger": (hardcharger, f"{prefix}_app.every"), "duckdb": (file_target, f"{prefix}_app.every"),
-            "gizmosql": (gizmosql, f"{prefix}_app.every")})
+        assert_copied_exactly(source_conn=src, source_table="app.every", target_conn=hardcharger,
+                              target_table=f"{prefix}_app.every")
     finally:
         src.close()
-        file_target.close()
-    differs = {c: got["gizmosql"][c][0] for c in COLUMNS if got["gizmosql"][c] != got["hardcharger"][c]}
-    assert differs == GIZMOSQL_DIFFERS
-    assert got["gizmosql"]["tmns"][1][0] == "12:34:56.123457"     # rounded: the nanoseconds are lost
 
 
-def test_every_duckdb_type_replicates_out_of_hardcharger_by_value(hardcharger, gizmosql, tmp_path, prefix):
+def test_every_duckdb_type_replicates_out_of_hardcharger_by_value(hardcharger, prefix):
     schema = f"{prefix}_src"
     execute(conn=hardcharger, statements=[f"CREATE SCHEMA {schema}", EVERY_DDL.format(table=f"{schema}.every"),
                                           EVERY_ROWS.format(table=f"{schema}.every")])
     objects = [{"db_schemas": [schema], "target_db_schema": f"{prefix}_out"}]
-    copy = tmp_path / "copy.duckdb"
     with pytest.raises(PlanError) as refused:      # unmasked, the lossy columns are refused before any copy
-        run(config=make_config(prefix=prefix, source=hardcharger_source(), objects=objects,
-                               target={"type": "duckdb", "path": str(copy)}))
+        run(config=make_config(prefix=prefix, source=hardcharger_source(), objects=objects))
     for column in LOSSY:
         assert f"{schema}.every.{column} (" in str(refused.value), str(refused.value)
     summary, out = run(config=make_config(prefix=prefix, source=hardcharger_source(), objects=objects,
-                                          target={"type": "duckdb", "path": str(copy)}, columns=AS_TEXT_RULE))
+                                          columns=AS_TEXT_RULE))
     assert summary.exit_code == EXIT_OK and summary.stats["tables_copied"] == 1, out
-    file_target = duckdb_file(path=copy)
-    try:
-        source = {c: typed_values(conn=hardcharger, table=f"{schema}.every", column=c) for c in COLUMNS}
-        copied = {c: typed_values(conn=file_target, table=f"{prefix}_out.every", column=c) for c in COLUMNS}
-    finally:
-        file_target.close()
-    for column in COLUMNS:
-        assert copied[column][0] == EXPECTED_TYPES.get(column, source[column][0]), (column, copied[column])
-        assert copied[column][1] == source[column][1], (column, copied[column], source[column])
+    assert_copied_exactly(source_conn=hardcharger, source_table=f"{schema}.every", target_conn=hardcharger,
+                          target_table=f"{prefix}_out.every")
 
 
-def test_hugeint_beyond_38_digits_fails_with_a_hint(hardcharger, tmp_path, prefix):
-    # DuckDB 1.5 and GizmoSQL send such a value as an out-of-range decimal128(38, 0); Hardcharger refuses it.
+def test_hugeint_beyond_38_digits_fails_with_a_hint(hardcharger, prefix):
+    # DuckDB 1.5 sends such a value as an out-of-range decimal128(38, 0); Hardcharger refuses to.
     schema = f"{prefix}_big"
     execute(conn=hardcharger, statements=[
         f"CREATE SCHEMA {schema}", f"CREATE TABLE {schema}.t (id INTEGER, h HUGEINT)",
         f"INSERT INTO {schema}.t VALUES (1, 170141183460469231731687303715884105727)"])
     objects = [{"db_schemas": [schema], "target_db_schema": f"{prefix}_bigout"}]
-    copy = tmp_path / "copy.duckdb"
-    summary, out = run(config=make_config(prefix=prefix, source=hardcharger_source(), objects=objects,
-                                          target={"type": "duckdb", "path": str(copy)}))
+    summary, out = run(config=make_config(prefix=prefix, source=hardcharger_source(), objects=objects))
     assert summary.exit_code == EXIT_FAILED, out
     assert "cannot send the HUGEINT value" in out and "CAST({column} AS VARCHAR)" in out, out
     # ... and the hint works: the value arrives whole, as text.
-    summary, out = run(config=make_config(prefix=prefix, source=hardcharger_source(), objects=objects,
-                                          target={"type": "duckdb", "path": str(copy)}, columns=[{
-                                              "tables": ["t"], "mask": {"h": {"strategy": "expression",
-                                                                              "sql": "CAST({column} AS VARCHAR)"}}}]))
+    summary, out = run(config=make_config(prefix=prefix, source=hardcharger_source(), objects=objects, columns=[{
+        "tables": ["t"], "mask": {"h": AS_TEXT}}]))
     assert summary.exit_code == EXIT_OK, out
-    file_target = duckdb_file(path=copy)
-    try:
-        assert query(conn=file_target, sql=f"SELECT h FROM {prefix}_bigout.t") == \
-            [("170141183460469231731687303715884105727",)]
-    finally:
-        file_target.close()
+    assert query(conn=hardcharger, sql=f"SELECT h FROM {prefix}_bigout.t") == \
+        [("170141183460469231731687303715884105727",)]
 
 
 # ---- every Arrow type, through ADBC ingest ------------------------------------------------------
@@ -261,15 +217,8 @@ ARROW_TYPES = {
     "null": (pa.null(), [None, None, None]),
 }
 # Hardcharger's ingest matches DuckDB's own on every Arrow type but one: an Arrow null column (no values at
-# all) becomes VARCHAR, as on GizmoSQL, where DuckDB makes a column of its "NULL" type, which can never hold
-# a value.
+# all) becomes VARCHAR, where DuckDB makes a column of its "NULL" type, which can never hold a value.
 HARDCHARGER_ARROW_DIFFERS = {"null": "VARCHAR"}
-# GizmoSQL v1.41's ingest (Arrow -> DuckDB column) stores these differently from DuckDB's own ingest
-# (gizmosql#196: unknown types fell back to VARCHAR).
-GIZMOSQL_ARROW_DIFFERS = {"dec32": "VARCHAR", "dec64": "VARCHAR", "bin_view": "VARCHAR", "fixed_bin": "VARCHAR",
-                          "time64_ns": "TIME", "interval": "VARCHAR", "list_view": "VARCHAR", "uuid": "VARCHAR",
-                          "json": "VARCHAR", "null": "VARCHAR"}
-
 
 def arrow_table(name: str) -> pa.Table:
     arrow_type, values = ARROW_TYPES[name]
@@ -291,27 +240,23 @@ def ingested(conn, table: str, data: pa.Table) -> tuple[str, list]:
     return typed_values(conn=conn, table=table, column="v")
 
 
-def test_every_arrow_type_ingests_as_duckdb_does(hardcharger, gizmosql, prefix):
+def test_every_arrow_type_ingests_as_duckdb_does(hardcharger, prefix):
     reference = duckdb_connect(path=":memory:")
     execute(conn=reference, statements=["SET TimeZone = 'UTC'"])
     target = hardcharger_connect(autocommit=False)
-    gizmo = gizmosql_connect()
-    differs = {"hardcharger": {}, "gizmosql": {}}
+    differs = {}
     try:
         for name in ARROW_TYPES:
             data = arrow_table(name=name)
             expected = ingested(conn=reference, table=f"a_{name}", data=data)
-            for server, conn in (("hardcharger", target), ("gizmosql", gizmo)):
-                got = ingested(conn=conn, table=f"{prefix}_a_{name}", data=data)
-                if got != expected:
-                    differs[server][name] = got[0]
-                    assert got[1] == expected[1], (server, name, got, expected)   # same values, other type
+            got = ingested(conn=target, table=f"{prefix}_a_{name}", data=data)
+            if got != expected:
+                differs[name] = got[0]
+                assert got[1] == expected[1], (name, got, expected)   # same values, other type
     finally:
         reference.close()
         target.close()
-        gizmo.close()
-    assert differs["hardcharger"] == HARDCHARGER_ARROW_DIFFERS, differs["hardcharger"]
-    assert differs["gizmosql"] == GIZMOSQL_ARROW_DIFFERS, differs["gizmosql"]
+    assert differs == HARDCHARGER_ARROW_DIFFERS, differs
 
 
 @pytest.mark.parametrize(("arrow_type", "values", "message"), [
@@ -463,88 +408,9 @@ def test_postgres_to_hardcharger_matches_source(postgres, hardcharger, prefix):
             cur.execute(operation="UPDATE sales.orders SET amount = amount - 1 WHERE id = 7")
 
 
-def test_parallel_snapshot_run_into_hardcharger(postgres, hardcharger, prefix):
-    config = make_config(prefix=prefix, source=postgres_source(consistency="snapshot"), objects=pg_objects(prefix),
-                         target=hardcharger_target(), parallelism=4)
-    summary, out = run(config=config)
-    assert summary.exit_code == EXIT_OK and summary.stats["tables_copied"] == 4, out
-    assert query(conn=hardcharger, sql=f"SELECT count(*), CAST(sum(amount) AS VARCHAR) FROM {prefix}_sales.orders") \
-        == query(conn=postgres, sql="SELECT count(*), sum(amount)::text FROM sales.orders")
-
-
-INC = "HCINC"
-INC_TABLES = {"ORDERS": "id", "ORDER_LINES": "order_id, line_no"}
-
-
-@pytest.fixture(scope="module")
-def oracle_inc(oracle):
-    system = oracle_connect(username="system", password=ORACLE_SYSTEM_PASSWORD)
-    execute(conn=system, statements=[
-        f"BEGIN EXECUTE IMMEDIATE 'DROP USER {INC} CASCADE'; EXCEPTION WHEN OTHERS THEN NULL; END;",
-        f"CREATE USER {INC} IDENTIFIED BY hcinc QUOTA UNLIMITED ON users",
-        f"CREATE TABLE {INC}.orders (id NUMBER(10) PRIMARY KEY, status VARCHAR2(20), amount NUMBER(12,2))",
-        f"INSERT INTO {INC}.orders SELECT LEVEL, 'open', LEVEL * 1.25 FROM dual CONNECT BY LEVEL <= 5000",
-        f"CREATE TABLE {INC}.order_lines (order_id NUMBER(10), line_no NUMBER(5), qty NUMBER(8), "
-        "PRIMARY KEY (order_id, line_no))",
-        f"INSERT INTO {INC}.order_lines SELECT CEIL(LEVEL / 3), MOD(LEVEL, 3) + 1, LEVEL FROM dual "
-        "CONNECT BY LEVEL <= 9000",
-        "COMMIT",
-        *[f"GRANT SELECT ON {INC}.{t} TO {ORACLE_USERNAME}" for t in INC_TABLES],
-        *[f"GRANT FLASHBACK ON {INC}.{t} TO {ORACLE_USERNAME}" for t in INC_TABLES],
-    ])
-    yield system
-    system.close()
-
-
-def wait_for_flashback(conn):
-    deadline = time.monotonic() + 30          # ORA-01466 for a few seconds after a table changes shape
-    while True:
-        scn = query(conn=conn, sql="SELECT TO_CHAR(DBMS_FLASHBACK.GET_SYSTEM_CHANGE_NUMBER) FROM dual")[0][0]
-        try:
-            for table in INC_TABLES:
-                query(conn=conn, sql=f"SELECT COUNT(*) FROM {INC}.{table} AS OF SCN {scn}")
-            return
-        except Exception:
-            if time.monotonic() > deadline:
-                raise
-            time.sleep(0.5)
-
-
-def test_oracle_incremental_merges_into_hardcharger(oracle_inc, hardcharger, prefix):
-    source = oracle_connect()
-    wait_for_flashback(conn=source)
-    config = make_config(prefix=prefix, source=oracle_source(consistency="snapshot"), parallelism=2,
-                         objects=[{"db_schemas": [INC], "target_db_schema": f"{prefix}_inc"}],
-                         target=hardcharger_target(), refresh={"mode": "incremental"})
-
-    def assert_identical():
-        for table, order in INC_TABLES.items():
-            expected = query(conn=source, sql=f"SELECT * FROM {INC}.{table} ORDER BY {order}")
-            actual = query(conn=hardcharger, sql=f"SELECT * FROM {prefix}_inc.{table.lower()} ORDER BY {order}")
-            assert actual == expected, f"{table}: {len(actual)} target rows vs {len(expected)} source rows"
-
-    try:
-        summary, out = run(config=config)
-        assert summary.exit_code == EXIT_OK and summary.stats["tables_copied"] == 2, out
-        assert_identical()
-        execute(conn=oracle_inc, statements=[
-            f"UPDATE {INC}.orders SET status = 'shipped', amount = amount + 1 WHERE MOD(id, 100) = 0",
-            f"DELETE FROM {INC}.orders WHERE id BETWEEN 4991 AND 5000",
-            f"INSERT INTO {INC}.orders SELECT 5000 + LEVEL, 'new', LEVEL FROM dual CONNECT BY LEVEL <= 25",
-            f"UPDATE {INC}.order_lines SET qty = -qty WHERE order_id = 7",
-            f"DELETE FROM {INC}.order_lines WHERE order_id = 8",
-            "COMMIT"])
-        summary, out = run(config=config)
-        assert summary.exit_code == EXIT_OK and summary.stats["tables_merged"] == 2, out
-        assert "Merging HCINC.ORDERS" in out and "Copying HCINC" not in out, out
-        assert_identical()
-    finally:
-        source.close()
-
-
 # ---- Hardcharger as a source -------------------------------------------------------------------
 
-def test_hardcharger_to_duckdb_with_views_and_watermark_merges(hardcharger, tmp_path, prefix):
+def test_hardcharger_source_with_views_and_watermark_merges(hardcharger, prefix):
     s = f"{prefix}_shop"
     execute(conn=hardcharger, statements=[
         f"CREATE SCHEMA {s}",
@@ -557,22 +423,17 @@ def test_hardcharger_to_duckdb_with_views_and_watermark_merges(hardcharger, tmp_
         "FROM range(1, 200001) t(i)",
         f"CREATE VIEW {s}.big_spenders AS SELECT c.name, sum(o.amount) AS total FROM {s}.orders o "
         f"JOIN {s}.customers c ON c.id = o.customer_id GROUP BY c.name HAVING sum(o.amount) > 10000"])
-    copy = tmp_path / "copy.duckdb"
-    config = make_config(prefix=prefix, source=hardcharger_source(), target={"type": "duckdb", "path": str(copy)},
-                         objects=[{"db_schemas": [s], "target_db_schema": "shop"}], parallelism=2,
+    config = make_config(prefix=prefix, source=hardcharger_source(),
+                         objects=[{"db_schemas": [s], "target_db_schema": f"{prefix}_copy"}], parallelism=2,
                          refresh={"mode": "incremental", "watermark_column": "updated_at",
                                   "watermark_lookback_minutes": 0})
 
     def assert_identical():
-        target = duckdb_file(path=copy)
-        try:
-            for table in ("customers", "orders"):
-                assert query(conn=target, sql=f"SELECT * FROM shop.{table} ORDER BY id") == \
-                    query(conn=hardcharger, sql=f"SELECT * FROM {s}.{table} ORDER BY id"), table
-            assert query(conn=target, sql="SELECT * FROM shop.big_spenders ORDER BY name") == \
-                query(conn=hardcharger, sql=f"SELECT * FROM {s}.big_spenders ORDER BY name")
-        finally:
-            target.close()
+        for table in ("customers", "orders"):
+            assert query(conn=hardcharger, sql=f"SELECT * FROM {prefix}_copy.{table} ORDER BY id") == \
+                query(conn=hardcharger, sql=f"SELECT * FROM {s}.{table} ORDER BY id"), table
+        assert query(conn=hardcharger, sql=f"SELECT * FROM {prefix}_copy.big_spenders ORDER BY name") == \
+            query(conn=hardcharger, sql=f"SELECT * FROM {s}.big_spenders ORDER BY name")
 
     summary, out = run(config=config)
     assert summary.exit_code == EXIT_OK and summary.stats["tables_copied"] == 2, out
@@ -593,8 +454,7 @@ def test_serializable_hardcharger_source_hides_later_commits(hardcharger, prefix
     s = f"{prefix}_ser"
     execute(conn=hardcharger, statements=[f"CREATE SCHEMA {s}", f"CREATE TABLE {s}.t AS SELECT * FROM range(10) r(i)"])
     source = make_source(config=parse_config(data={
-        "version": 1, "source": hardcharger_source(consistency="serializable"), "target": {"type": "duckdb",
-                                                                                           "path": ":memory:"},
+        "version": 1, "source": hardcharger_source(consistency="serializable"), "target": hardcharger_target(),
         "objects": [{"db_schemas": [s]}]}).source)
     conn = source.connect()
     try:

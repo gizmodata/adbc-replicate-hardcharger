@@ -1,12 +1,29 @@
 """Oracle functions that view translation rewrites, checked value by value against Oracle itself:
-each expression is evaluated in Oracle, then translated and evaluated in GizmoSQL."""
+each expression is evaluated in Oracle, then translated and evaluated in Hardcharger."""
 
 import pytest
 from conftest import query
 
-from adbc_replicate.views import ViewTranslationError, translate_view
+from adbc_replicate_hardcharger.views import ViewTranslationError, translate_view
 
 pytestmark = pytest.mark.integration
+
+# Hardcharger 0.3.0's sensitive-path guard refuses SQL with any string literal containing '{' or '*' (as a
+# "user credential store" path; reported upstream), so a translation that needs such a literal can't be
+# created there. Each test lists those cases exactly, so a server fix, or a new refusal, fails it.
+GUARD = "Hardcharger blocked access to"
+
+
+def create_view(conn, sql: str, case: str, refused: list) -> bool:
+    """Create a translated view; False (recording `case`) when the server's guard refuses it."""
+    try:
+        query(conn=conn, sql=sql)
+        return True
+    except Exception as e:
+        if GUARD not in str(e):
+            raise
+        refused.append(case)
+        return False
 
 NUMBERS = ["123.5", "12345678", "-0.4", "-123.5", "0", "9999999.4", "-9999999.6", "0.5", "-0.5", "NULL"]
 DOUBLES = ["-42.4", "1234567.6", "0", "-0.4", "999999999.4", "999999999.5", "-1234.5", "-999999999.6", "NULL"]
@@ -18,21 +35,26 @@ CASES = [(v, "NUMBER", "DECIMAL(12,2)", f) for v in NUMBERS for f in ("fm0000000
          for f in ("MI", "YYYYMMDD", "DAY", "fmDAY", "YYYY-MM-DD HH24:MI:SS", "DD/MM/YY HH12", "HH:MI", 'yyyy"Q"mm')]
 
 
-def test_to_char_matches_oracle(oracle, gizmosql, prefix):
+TO_CHAR_REFUSED = {"fm999,999,990"}           # translated with format('{:,}', ...)
+
+
+def test_to_char_matches_oracle(oracle, hardcharger, prefix):
     schema = f"{prefix}_fn"
-    query(conn=gizmosql, sql=f"CREATE SCHEMA {schema}")
-    mismatches = []
+    query(conn=hardcharger, sql=f"CREATE SCHEMA {schema}")
+    mismatches, refused = [], []
     for i, (value, oracle_type, target_type, fmt) in enumerate(CASES):
         expected = query(conn=oracle, sql=f"SELECT TO_CHAR(CAST({value} AS {oracle_type}), '{fmt}') FROM dual")[0][0]
-        query(conn=gizmosql, sql=f"CREATE OR REPLACE TABLE {schema}.t AS SELECT CAST({value} AS {target_type}) AS x")
+        query(conn=hardcharger, sql=f"CREATE OR REPLACE TABLE {schema}.t AS SELECT CAST({value} AS {target_type}) AS x")
         sql = translate_view(definition=f"SELECT TO_CHAR(x, '{fmt}') AS r FROM t", source_dialect="oracle",
                              view_db_schema=schema.upper(), target_db_schema=schema, target_view=f"v{i}",
                              name_map={}, case="lower")
-        query(conn=gizmosql, sql=sql)
-        actual = query(conn=gizmosql, sql=f"SELECT r FROM {schema}.v{i}")[0][0]
+        if not create_view(conn=hardcharger, sql=sql, case=fmt, refused=refused):
+            continue
+        actual = query(conn=hardcharger, sql=f"SELECT r FROM {schema}.v{i}")[0][0]
         if actual != expected:
             mismatches.append(f"TO_CHAR({value}, {fmt!r}): Oracle {expected!r}, translated {actual!r}")
     assert not mismatches, "\n".join(mismatches)
+    assert set(refused) == TO_CHAR_REFUSED, sorted(set(refused))
 
 
 DATE_CASES = ["TRUNC(x)", "TRUNC(x, 'DD')", "TRUNC(x, 'hh')", "TRUNC(x, 'MM')", "TRUNC(x, 'YYYY')", "TRUNC(x, 'IW')",
@@ -41,20 +63,20 @@ DATE_VALUES = ["TIMESTAMP '2026-10-14 09:05:07.250'", "TIMESTAMP '2026-01-04 23:
                "NULL"]
 
 
-def test_date_functions_match_oracle(oracle, gizmosql, prefix):
+def test_date_functions_match_oracle(oracle, hardcharger, prefix):
     schema = f"{prefix}_dt"
-    query(conn=gizmosql, sql=f"CREATE SCHEMA {schema}")
+    query(conn=hardcharger, sql=f"CREATE SCHEMA {schema}")
     types = {(schema.upper(), "T"): {"X": "DATE"}}
     mismatches = []
     for i, (expression, value) in enumerate((e, v) for e in DATE_CASES for v in DATE_VALUES):
         expected = query(conn=oracle, sql=f"SELECT TO_CHAR({expression.replace('x', f'CAST({value} AS DATE)')}, "
                                           "'YYYY-MM-DD HH24:MI:SS') FROM dual")[0][0]
-        query(conn=gizmosql, sql=f"CREATE OR REPLACE TABLE {schema}.t AS SELECT CAST({value} AS TIMESTAMP) AS x")
+        query(conn=hardcharger, sql=f"CREATE OR REPLACE TABLE {schema}.t AS SELECT CAST({value} AS TIMESTAMP) AS x")
         sql = translate_view(definition=f"SELECT {expression} AS r FROM t", source_dialect="oracle",
                              view_db_schema=schema.upper(), target_db_schema=schema, target_view=f"v{i}",
                              name_map={}, case="lower", column_types=types)
-        query(conn=gizmosql, sql=sql)
-        actual = query(conn=gizmosql, sql=f"SELECT strftime(r, '%Y-%m-%d %H:%M:%S') FROM {schema}.v{i}")[0][0]
+        query(conn=hardcharger, sql=sql)
+        actual = query(conn=hardcharger, sql=f"SELECT strftime(r, '%Y-%m-%d %H:%M:%S') FROM {schema}.v{i}")[0][0]
         if actual != expected:
             mismatches.append(f"{expression} on {value}: Oracle {expected!r}, translated {actual!r}")
     assert not mismatches, "\n".join(mismatches)
@@ -72,9 +94,9 @@ NLS_TEXT_DATES = ["2026-10-16 14:35:12", "2010-02-05 08:00:00", "2030-09-30 23:5
 NLS_TEXT_ALWAYS_FAIL = ["MM-MON-RR", "DD-MON", "YYYYMMDD", "MON-DD-RR", "DD-DD-RR", "MM-DD-RR", "Y-MM-DD"]
 
 
-def test_to_date_of_default_date_text_matches_oracle(oracle, gizmosql, prefix):
+def test_to_date_of_default_date_text_matches_oracle(oracle, hardcharger, prefix):
     schema = f"{prefix}_nt"
-    query(conn=gizmosql, sql=f"CREATE SCHEMA {schema}")
+    query(conn=hardcharger, sql=f"CREATE SCHEMA {schema}")
     types = {(schema.upper(), "T"): {"X": "DATE"}}
     mismatches = []
     for i, (fmt, value) in enumerate((f, v) for f in NLS_TEXT_FORMATS for v in NLS_TEXT_DATES):
@@ -83,14 +105,14 @@ def test_to_date_of_default_date_text_matches_oracle(oracle, gizmosql, prefix):
                                               f"HH24:MI:SS')), '{fmt}'), 'SYYYY-MM-DD HH24:MI:SS') FROM dual")[0][0].strip()
         except Exception:
             expected = "error"
-        query(conn=gizmosql, sql=f"CREATE OR REPLACE TABLE {schema}.t AS SELECT TIMESTAMP '{value}' AS x")
+        query(conn=hardcharger, sql=f"CREATE OR REPLACE TABLE {schema}.t AS SELECT TIMESTAMP '{value}' AS x")
         sql = translate_view(definition=f"SELECT TO_DATE(TO_CHAR(x), '{fmt}') AS r FROM t", source_dialect="oracle",
                              view_db_schema=schema.upper(), target_db_schema=schema, target_view=f"v{i}",
                              name_map={}, case="lower", column_types=types, time_zone="UTC")
-        query(conn=gizmosql, sql=sql)
+        query(conn=hardcharger, sql=sql)
         try:
             # strftime goes through nanoseconds for TIMESTAMP_S and fails before 1677 (DuckDB 1.5.6); TIMESTAMP doesn't
-            actual = query(conn=gizmosql, sql=f"SELECT lpad(CAST(year(r) AS VARCHAR), 4, '0') || "
+            actual = query(conn=hardcharger, sql=f"SELECT lpad(CAST(year(r) AS VARCHAR), 4, '0') || "
                                               f"strftime(CAST(r AS TIMESTAMP), '-%m-%d %H:%M:%S') FROM {schema}.v{i}")[0][0]
         except Exception:
             actual = "error"
@@ -107,7 +129,7 @@ def test_to_date_of_default_date_text_matches_oracle(oracle, gizmosql, prefix):
 
 
 # Oracle date arithmetic: DATE +/- n days (rounded to the second; a TIMESTAMP is truncated first),
-# DATE - DATE in days. Each expression runs in Oracle and, translated, in GizmoSQL.
+# DATE - DATE in days. Each expression runs in Oracle and, translated, in Hardcharger.
 ARITHMETIC = [
     "d + 1", "d - 1", "d + 1/7", "d - 1/7", "d + 1.5", "1 + d", "d + 1/86400*0.5", "d + 1/86400*0.4",
     "ts + 1/7", "ts - 1", "ts + 0",
@@ -119,10 +141,10 @@ ARITHMETIC = [
 ]
 
 
-def test_date_arithmetic_matches_oracle(oracle, gizmosql, prefix):
+def test_date_arithmetic_matches_oracle(oracle, hardcharger, prefix):
     schema = f"{prefix}_ar"
-    query(conn=gizmosql, sql=f"CREATE SCHEMA {schema}")
-    query(conn=gizmosql, sql=f"CREATE TABLE {schema}.t AS SELECT TIMESTAMP '2026-01-01 08:15:30' AS d, "
+    query(conn=hardcharger, sql=f"CREATE SCHEMA {schema}")
+    query(conn=hardcharger, sql=f"CREATE TABLE {schema}.t AS SELECT TIMESTAMP '2026-01-01 08:15:30' AS d, "
                              "TIMESTAMP '2026-01-03 14:00:00' AS d2, TIMESTAMP '2026-01-01 00:00:00.700' AS ts, "
                              "CAST(0.3 AS DECIMAL(10,2)) AS n")
     oracle_row = ("SELECT TO_DATE('2026-01-01 08:15:30','YYYY-MM-DD HH24:MI:SS') AS d, "
@@ -141,8 +163,8 @@ def test_date_arithmetic_matches_oracle(oracle, gizmosql, prefix):
             sql = translate_view(definition=template.format(e=expression), source_dialect="oracle",
                                  view_db_schema=schema.upper(), target_db_schema=schema, target_view=f"v{i}_{shape}",
                                  name_map={}, case="lower", column_types=types)
-            query(conn=gizmosql, sql=sql)
-            actual = query(conn=gizmosql, sql=f"SELECT r FROM {schema}.v{i}_{shape}")[0][0]
+            query(conn=hardcharger, sql=sql)
+            actual = query(conn=hardcharger, sql=f"SELECT r FROM {schema}.v{i}_{shape}")[0][0]
             same = (abs(float(actual) - float(expected)) < 1e-9) if not hasattr(expected, "year") else actual == expected
             if not same:
                 mismatches.append(f"{expression} ({shape}): Oracle {expected!r}, translated {actual!r}")
@@ -158,23 +180,25 @@ REGEX_CASES = [
 REGEX_VALUES = ["'Quote 123 and QUOTE #: 4567'", "'AB12cd_ef'", "'  multiple   spaces  here '", "'12345'", "'ab'", "NULL"]
 
 
-def test_regex_functions_match_oracle(oracle, gizmosql, prefix):
+def test_regex_functions_match_oracle(oracle, hardcharger, prefix):
     schema = f"{prefix}_rx"
-    query(conn=gizmosql, sql=f"CREATE SCHEMA {schema}")
-    mismatches = []
+    query(conn=hardcharger, sql=f"CREATE SCHEMA {schema}")
+    mismatches, refused = [], []
     for i, (expression, value) in enumerate((e, v) for e in REGEX_CASES for v in REGEX_VALUES):
         expected = query(conn=oracle, sql=f"SELECT {expression} FROM (SELECT CAST({value} AS VARCHAR2(100)) AS s FROM dual)")[0][0]
-        query(conn=gizmosql, sql=f"CREATE OR REPLACE TABLE {schema}.t AS SELECT CAST({value} AS VARCHAR) AS s")
+        query(conn=hardcharger, sql=f"CREATE OR REPLACE TABLE {schema}.t AS SELECT CAST({value} AS VARCHAR) AS s")
         sql = translate_view(definition=f"SELECT {expression} AS r FROM t", source_dialect="oracle",
                              view_db_schema=schema.upper(), target_db_schema=schema, target_view=f"v{i}", name_map={},
                              case="lower", column_types={(schema.upper(), "T"): {"S": "VARCHAR2"}})
-        query(conn=gizmosql, sql=sql)
-        actual = query(conn=gizmosql, sql=f"SELECT r FROM {schema}.v{i}")[0][0]
+        if not create_view(conn=hardcharger, sql=sql, case=expression, refused=refused):
+            continue
+        actual = query(conn=hardcharger, sql=f"SELECT r FROM {schema}.v{i}")[0][0]
         if actual == "" and expected is None:
             actual = None   # Oracle's empty string is NULL
         if actual != expected:
             mismatches.append(f"{expression} on {value}: Oracle {expected!r}, translated {actual!r}")
     assert not mismatches, "\n".join(mismatches)
+    assert set(refused) == {"REGEXP_REPLACE(s, '(\\d{2})(\\d)', '\\2-\\1')"}, sorted(set(refused))
 
 
 # INSTR with a start position and/or occurrence: overlapping matches, backward search from a negative
@@ -188,22 +212,22 @@ INSTR_VALUES = [("'apple-banana-cherry-date'", "'-'", "8", "2"), ("'aaaa'", "'aa
                 ("'a-b-c'", "'-'", "1", "NULL")]
 
 
-def test_instr_matches_oracle(oracle, gizmosql, prefix):
+def test_instr_matches_oracle(oracle, hardcharger, prefix):
     schema = f"{prefix}_in"
-    query(conn=gizmosql, sql=f"CREATE SCHEMA {schema}")
+    query(conn=hardcharger, sql=f"CREATE SCHEMA {schema}")
     types = {(schema.upper(), "T"): {"S": "VARCHAR2", "SUB": "VARCHAR2", "P": "NUMBER", "N": "NUMBER"}}
     mismatches = []
     for i, (expression, (s, sub, p, n)) in enumerate((e, v) for e in INSTR_CASES for v in INSTR_VALUES):
         expected = query(conn=oracle, sql=f"SELECT {expression} FROM (SELECT CAST({s} AS VARCHAR2(40)) AS s, "
                                           f"CAST({sub} AS VARCHAR2(5)) AS sub, CAST({p} AS NUMBER(5)) AS p, "
                                           f"CAST({n} AS NUMBER(5)) AS n FROM dual)")[0][0]
-        query(conn=gizmosql, sql=f"CREATE OR REPLACE TABLE {schema}.t AS SELECT CAST({s} AS VARCHAR) AS s, "
+        query(conn=hardcharger, sql=f"CREATE OR REPLACE TABLE {schema}.t AS SELECT CAST({s} AS VARCHAR) AS s, "
                                  f"CAST({sub} AS VARCHAR) AS sub, CAST({p} AS DECIMAL(5,0)) AS p, CAST({n} AS DECIMAL(5,0)) AS n")
         sql = translate_view(definition=f"SELECT {expression} AS r FROM t", source_dialect="oracle",
                              view_db_schema=schema.upper(), target_db_schema=schema, target_view=f"v{i}", name_map={},
                              case="lower", column_types=types)
-        query(conn=gizmosql, sql=sql)
-        actual = query(conn=gizmosql, sql=f"SELECT r FROM {schema}.v{i}")[0][0]
+        query(conn=hardcharger, sql=sql)
+        actual = query(conn=hardcharger, sql=f"SELECT r FROM {schema}.v{i}")[0][0]
         if actual == "" and expected is None:
             actual = None   # Oracle's empty string is NULL
         if expected is not None and not isinstance(expected, str):
@@ -229,12 +253,12 @@ KEEP_CASES = ["MIN(x) KEEP (DENSE_RANK FIRST ORDER BY k)", "MAX(x) KEEP (DENSE_R
               "MAX(x) KEEP (DENSE_RANK LAST ORDER BY k ASC, k2 DESC)", "MIN(x) KEEP (DENSE_RANK FIRST ORDER BY k DESC NULLS LAST, k2)"]
 
 
-def test_keep_dense_rank_matches_oracle(oracle, gizmosql, prefix):
+def test_keep_dense_rank_matches_oracle(oracle, hardcharger, prefix):
     schema = f"{prefix}_kp"
     rows = " UNION ALL ".join(f"SELECT {g} AS g, {'NULL' if k is None else k} AS k, {'NULL' if k2 is None else k2} AS k2, "
                               f"CAST({x} AS VARCHAR2(5)) AS x FROM dual" for g, k, k2, x in KEEP_ROWS)
-    query(conn=gizmosql, sql=f"CREATE SCHEMA {schema}")
-    query(conn=gizmosql, sql=f"CREATE TABLE {schema}.t AS SELECT CAST(g AS INTEGER) AS g, CAST(k AS DECIMAL(5,0)) AS k, "
+    query(conn=hardcharger, sql=f"CREATE SCHEMA {schema}")
+    query(conn=hardcharger, sql=f"CREATE TABLE {schema}.t AS SELECT CAST(g AS INTEGER) AS g, CAST(k AS DECIMAL(5,0)) AS k, "
                              f"CAST(k2 AS DECIMAL(5,0)) AS k2, CAST(x AS VARCHAR) AS x FROM ({rows.replace(' FROM dual', '').replace('VARCHAR2(5)', 'VARCHAR')})")
     mismatches = []
     for i, expression in enumerate(KEEP_CASES):
@@ -244,29 +268,29 @@ def test_keep_dense_rank_matches_oracle(oracle, gizmosql, prefix):
             expected = query(conn=oracle, sql=definition.replace("FROM t", f"FROM ({rows})"))
             sql = translate_view(definition=definition, source_dialect="oracle", view_db_schema=schema.upper(),
                                  target_db_schema=schema, target_view=f"v{i}_{shape}", name_map={}, case="lower")
-            query(conn=gizmosql, sql=sql)
-            actual = query(conn=gizmosql, sql=f"SELECT g, r FROM {schema}.v{i}_{shape} ORDER BY g")
+            query(conn=hardcharger, sql=sql)
+            actual = query(conn=hardcharger, sql=f"SELECT g, r FROM {schema}.v{i}_{shape} ORDER BY g")
             expected = [(int(g), r) for g, r in expected]
             if actual != expected:
                 mismatches.append(f"{expression} ({shape}): Oracle {expected!r}, translated {actual!r}")
     assert not mismatches, "\n".join(mismatches)
 
 
-def test_sys_context_reads_as_unset(oracle, gizmosql, prefix):
+def test_sys_context_reads_as_unset(oracle, hardcharger, prefix):
     """SYS_CONTEXT of a context nobody set is NULL in Oracle; translated (source_pseudo_columns: null)
     it is NULL too, and TO_DATE of it falls through to the NVL/COALESCE default, as in Oracle."""
     schema = f"{prefix}_sc"
-    query(conn=gizmosql, sql=f"CREATE SCHEMA {schema}")
-    query(conn=gizmosql, sql=f"CREATE TABLE {schema}.t AS SELECT 1 AS id")
-    expression = ("CASE WHEN SYS_CONTEXT('ADBC_REPLICATE_TEST_CTX', 'CUTOFF') IS NULL THEN 'unset' END || '/' || "
-                  "TO_CHAR(NVL(TO_DATE(SYS_CONTEXT('ADBC_REPLICATE_TEST_CTX', 'CUTOFF')), DATE '2026-01-02'), 'YYYY-MM-DD')")
+    query(conn=hardcharger, sql=f"CREATE SCHEMA {schema}")
+    query(conn=hardcharger, sql=f"CREATE TABLE {schema}.t AS SELECT 1 AS id")
+    expression = ("CASE WHEN SYS_CONTEXT('ADBC_REPLICATE_HARDCHARGER_TEST_CTX', 'CUTOFF') IS NULL THEN 'unset' END || '/' || "
+                  "TO_CHAR(NVL(TO_DATE(SYS_CONTEXT('ADBC_REPLICATE_HARDCHARGER_TEST_CTX', 'CUTOFF')), DATE '2026-01-02'), 'YYYY-MM-DD')")
     expected = query(conn=oracle, sql=f"SELECT {expression} FROM dual")[0][0]
     sql = translate_view(definition=f"SELECT {expression} AS r FROM t", source_dialect="oracle",
                          view_db_schema=schema.upper(), target_db_schema=schema, target_view="v", name_map={},
                          case="lower", pseudo_columns="null")
-    query(conn=gizmosql, sql=sql)
+    query(conn=hardcharger, sql=sql)
     assert expected == "unset/2026-01-02"
-    assert query(conn=gizmosql, sql=f"SELECT r FROM {schema}.v")[0][0] == expected
+    assert query(conn=hardcharger, sql=f"SELECT r FROM {schema}.v")[0][0] == expected
 
 
 # Hierarchical queries (START WITH / CONNECT BY) -> WITH RECURSIVE. A small bill of materials: part 4
@@ -325,12 +349,12 @@ def _normalized(rows):
     return sorted(tuple(value(v) for v in row) for row in rows)
 
 
-def test_connect_by_matches_oracle(oracle, gizmosql, prefix):
+def test_connect_by_matches_oracle(oracle, hardcharger, prefix):
     schema = f"{prefix}_cb"
     data = " UNION ALL ".join(f"SELECT {'NULL' if p is None else p} AS parent_id, {c} AS child_id, {q} AS qty, "
                               f"CAST({code} AS VARCHAR2(10)) AS code, {g} AS grp FROM dual" for p, c, q, code, g in BOM)
-    query(conn=gizmosql, sql=f"CREATE SCHEMA {schema}")
-    query(conn=gizmosql, sql=f"CREATE TABLE {schema}.t AS SELECT CAST(parent_id AS DECIMAL(10,0)) AS parent_id, "
+    query(conn=hardcharger, sql=f"CREATE SCHEMA {schema}")
+    query(conn=hardcharger, sql=f"CREATE TABLE {schema}.t AS SELECT CAST(parent_id AS DECIMAL(10,0)) AS parent_id, "
                              "CAST(child_id AS DECIMAL(10,0)) AS child_id, CAST(qty AS DECIMAL(38,10)) AS qty, "
                              f"CAST(code AS VARCHAR) AS code, CAST(grp AS DECIMAL(5,0)) AS grp "
                              f"FROM ({data.replace(' FROM dual', '').replace('VARCHAR2(10)', 'VARCHAR')})")
@@ -342,14 +366,14 @@ def test_connect_by_matches_oracle(oracle, gizmosql, prefix):
         expected = _normalized(query(conn=oracle, sql=oracle_sql))
         sql = translate_view(definition=definition, source_dialect="oracle", view_db_schema=schema.upper(),
                              target_db_schema=schema, target_view=f"v{i}", name_map={}, case="lower")
-        query(conn=gizmosql, sql=sql)
-        actual = _normalized(query(conn=gizmosql, sql=f"SELECT * FROM {schema}.v{i}"))
+        query(conn=hardcharger, sql=sql)
+        actual = _normalized(query(conn=hardcharger, sql=f"SELECT * FROM {schema}.v{i}"))
         if actual != expected:
             mismatches.append(f"{definition}\n  Oracle:     {expected}\n  translated: {actual}")
     assert not mismatches, "\n".join(mismatches)
 
 
-def test_unquoted_name_of_a_quoted_column_is_refused(oracle, gizmosql, prefix):
+def test_unquoted_name_of_a_quoted_column_is_refused(oracle, hardcharger, prefix):
     """ORDERDET has a quoted column "PartNo". Oracle resolves an unquoted partno in a subquery over it to the outer
     query (so the IN is always true); lower-cased in the target it would match orderdet.partno. The translation
     must refuse that view, and translate the quoted reference ("PartNo"), which means the same in both."""
@@ -360,9 +384,9 @@ def test_unquoted_name_of_a_quoted_column_is_refused(oracle, gizmosql, prefix):
     quoted = "SELECT partno FROM estim WHERE partno IN (SELECT \"PartNo\" FROM orderdet)"
     assert sorted(r[0] for r in query(conn=oracle, sql=data + unquoted)) == ["A", "B"]   # resolved to estim.partno
     assert [r[0] for r in query(conn=oracle, sql=data + quoted)] == ["A"]
-    query(conn=gizmosql, sql=f"CREATE SCHEMA {schema}")
-    query(conn=gizmosql, sql=f"CREATE TABLE {schema}.orderdet AS SELECT 'A' AS partno")
-    query(conn=gizmosql, sql=f"CREATE TABLE {schema}.estim AS SELECT * FROM (VALUES ('A'), ('B')) AS v(partno)")
+    query(conn=hardcharger, sql=f"CREATE SCHEMA {schema}")
+    query(conn=hardcharger, sql=f"CREATE TABLE {schema}.orderdet AS SELECT 'A' AS partno")
+    query(conn=hardcharger, sql=f"CREATE TABLE {schema}.estim AS SELECT * FROM (VALUES ('A'), ('B')) AS v(partno)")
     names = {(schema.upper(), "ORDERDET"): {"partno": "PartNo"}, (schema.upper(), "ESTIM"): {"partno": "PARTNO"}}
     with pytest.raises(ViewTranslationError, match="doesn't match ORDERDET's column \"PartNo\""):
         translate_view(definition=unquoted, source_dialect="oracle", view_db_schema=schema.upper(),
@@ -370,11 +394,11 @@ def test_unquoted_name_of_a_quoted_column_is_refused(oracle, gizmosql, prefix):
                        column_names=names)
     sql = translate_view(definition=quoted, source_dialect="oracle", view_db_schema=schema.upper(),
                          target_db_schema=schema, target_view="v_quoted", name_map={}, case="lower", column_names=names)
-    query(conn=gizmosql, sql=sql)
-    assert [r[0] for r in query(conn=gizmosql, sql=f"SELECT partno FROM {schema}.v_quoted")] == ["A"]
+    query(conn=hardcharger, sql=sql)
+    assert [r[0] for r in query(conn=hardcharger, sql=f"SELECT partno FROM {schema}.v_quoted")] == ["A"]
 
 
-def test_connect_by_nocycle_matches_oracle(oracle, gizmosql, prefix):
+def test_connect_by_nocycle_matches_oracle(oracle, hardcharger, prefix):
     """Parts 2 and 3 contain each other: NOCYCLE stops where a row would be its own ancestor."""
     schema = f"{prefix}_cy"
     data = " UNION ALL ".join(f"SELECT {'NULL' if p is None else p} AS parent_id, {c} AS child_id FROM dual"
@@ -382,15 +406,15 @@ def test_connect_by_nocycle_matches_oracle(oracle, gizmosql, prefix):
     definition = ("SELECT LEVEL AS lvl, child_id, SYS_CONNECT_BY_PATH(child_id, '/') AS path, CONNECT_BY_ISLEAF AS leaf "
                   "FROM c START WITH parent_id IS NULL CONNECT BY NOCYCLE PRIOR child_id = parent_id")
     expected = _normalized(query(conn=oracle, sql=f"WITH c AS ({data}) {definition}"))
-    query(conn=gizmosql, sql=f"CREATE SCHEMA {schema}")
-    query(conn=gizmosql, sql=f"CREATE TABLE {schema}.c AS SELECT CAST(parent_id AS DECIMAL(10,0)) AS parent_id, "
+    query(conn=hardcharger, sql=f"CREATE SCHEMA {schema}")
+    query(conn=hardcharger, sql=f"CREATE TABLE {schema}.c AS SELECT CAST(parent_id AS DECIMAL(10,0)) AS parent_id, "
                              f"CAST(child_id AS DECIMAL(10,0)) AS child_id FROM ({data.replace(' FROM dual', '')})")
-    query(conn=gizmosql, sql=translate_view(definition=definition, source_dialect="oracle", view_db_schema=schema.upper(),
+    query(conn=hardcharger, sql=translate_view(definition=definition, source_dialect="oracle", view_db_schema=schema.upper(),
                                             target_db_schema=schema, target_view="v", name_map={}, case="lower"))
-    assert _normalized(query(conn=gizmosql, sql=f"SELECT * FROM {schema}.v")) == expected
+    assert _normalized(query(conn=hardcharger, sql=f"SELECT * FROM {schema}.v")) == expected
 
 
-# Implicit text conversion and other expressions, each run in Oracle and, translated, in GizmoSQL on
+# Implicit text conversion and other expressions, each run in Oracle and, translated, in Hardcharger on
 # the same row. n: NUMBER(10,2) (DECIMAL(38,10) in the target, as unconstrained NUMBER loads),
 # d: DATE, s: VARCHAR2, z: NULL.
 EXPRESSION_CASES = [
@@ -436,10 +460,10 @@ EXPRESSION_CASES = [
 ]
 
 
-def test_expressions_match_oracle(oracle, gizmosql, prefix):
+def test_expressions_match_oracle(oracle, hardcharger, prefix):
     schema = f"{prefix}_ex"
-    query(conn=gizmosql, sql=f"CREATE SCHEMA {schema}")
-    query(conn=gizmosql, sql=f"CREATE TABLE {schema}.t AS SELECT CAST(1.50 AS DECIMAL(38,10)) AS n, "
+    query(conn=hardcharger, sql=f"CREATE SCHEMA {schema}")
+    query(conn=hardcharger, sql=f"CREATE TABLE {schema}.t AS SELECT CAST(1.50 AS DECIMAL(38,10)) AS n, "
                              "CAST(2.7 AS DECIMAL(38,10)) AS n2, CAST(42 AS DECIMAL(10,0)) AS i, "
                              "TIMESTAMP '2026-03-08 09:05:07' AS d, TIMESTAMP '2026-11-01 01:30:00' AS d2, "
                              "'Hello World' AS s, CAST(NULL AS VARCHAR) AS z, CAST(0 AS DECIMAL(10,0)) AS z0")
@@ -449,22 +473,24 @@ def test_expressions_match_oracle(oracle, gizmosql, prefix):
                   "CAST('Hello World' AS VARCHAR2(20)) AS s, CAST(NULL AS VARCHAR2(5)) AS z, 0 AS z0 FROM dual")
     types = {(schema.upper(), "T"): {"N": "NUMBER", "N2": "NUMBER", "I": "NUMBER", "D": "DATE", "D2": "DATE",
                                      "S": "VARCHAR2", "Z": "VARCHAR2", "Z0": "NUMBER"}}
-    mismatches = []
+    mismatches, refused = [], []
     for i, expression in enumerate(EXPRESSION_CASES):
         expected = query(conn=oracle, sql=f"SELECT {expression} FROM ({oracle_row})")[0][0]
         sql = translate_view(definition=f"SELECT {expression} AS r FROM t", source_dialect="oracle",
                              view_db_schema=schema.upper(), target_db_schema=schema, target_view=f"v{i}", name_map={},
                              case="lower", column_types=types)
-        query(conn=gizmosql, sql=sql)
-        actual = query(conn=gizmosql, sql=f"SELECT r FROM {schema}.v{i}")[0][0]
+        if not create_view(conn=hardcharger, sql=sql, case=expression, refused=refused):
+            continue
+        actual = query(conn=hardcharger, sql=f"SELECT r FROM {schema}.v{i}")[0][0]
         if not isinstance(expected, (str, type(None))):
             expected, actual = float(expected), None if actual is None else float(actual)
         if actual != expected:
             mismatches.append(f"{expression}: Oracle {expected!r}, translated {actual!r}")
     assert not mismatches, "\n".join(mismatches)
+    assert set(refused) == {"RPAD(n, 6, '*')"}, sorted(set(refused))
 
 
-# Query shapes: whole rows compared (sorted) between Oracle and the translated view in GizmoSQL.
+# Query shapes: whole rows compared (sorted) between Oracle and the translated view in Hardcharger.
 SHAPE_ROWS = [(1, "'A'", 10, 5, None), (1, "'B'", 20, None, 7), (2, "'C'", None, None, None), (2, "'D'", 40, 8, 9),
               (3, "'E'", 50, 1, 2)]
 SHAPES = [
@@ -488,13 +514,13 @@ SHAPES = [
 ]
 
 
-def test_query_shapes_match_oracle(oracle, gizmosql, prefix):
+def test_query_shapes_match_oracle(oracle, hardcharger, prefix):
     schema = f"{prefix}_qs"
     data = " UNION ALL ".join(f"SELECT {g} AS grp, CAST({code} AS VARCHAR2(5)) AS code, {'NULL' if a is None else a} AS a, "
                               f"{'NULL' if b is None else b} AS b, {'NULL' if c is None else c} AS c FROM dual"
                               for g, code, a, b, c in SHAPE_ROWS)
-    query(conn=gizmosql, sql=f"CREATE SCHEMA {schema}")
-    query(conn=gizmosql, sql=f"CREATE TABLE {schema}.t AS SELECT CAST(grp AS DECIMAL(10,0)) AS grp, CAST(code AS VARCHAR) "
+    query(conn=hardcharger, sql=f"CREATE SCHEMA {schema}")
+    query(conn=hardcharger, sql=f"CREATE TABLE {schema}.t AS SELECT CAST(grp AS DECIMAL(10,0)) AS grp, CAST(code AS VARCHAR) "
                              "AS code, CAST(a AS DECIMAL(10,0)) AS a, CAST(b AS DECIMAL(10,0)) AS b, "
                              f"CAST(c AS DECIMAL(10,0)) AS c FROM ({data.replace(' FROM dual', '').replace('VARCHAR2(5)', 'VARCHAR')})")
     types = {(schema.upper(), "T"): {"GRP": "NUMBER", "CODE": "VARCHAR2", "A": "NUMBER", "B": "NUMBER", "C": "NUMBER"}}
@@ -507,8 +533,8 @@ def test_query_shapes_match_oracle(oracle, gizmosql, prefix):
         sql = translate_view(definition=definition, source_dialect="oracle", view_db_schema=schema.upper(),
                              target_db_schema=schema, target_view=f"v{i}", name_map={}, case="lower",
                              column_types=types, time_zone="UTC")
-        query(conn=gizmosql, sql=sql)
-        actual = _normalized(query(conn=gizmosql, sql=f"SELECT * FROM {schema}.v{i}"))
+        query(conn=hardcharger, sql=sql)
+        actual = _normalized(query(conn=hardcharger, sql=f"SELECT * FROM {schema}.v{i}"))
         if actual != expected:
             mismatches.append(f"{definition}\n  Oracle:     {expected}\n  translated: {actual}")
     assert not mismatches, "\n".join(mismatches)

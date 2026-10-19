@@ -16,7 +16,7 @@ from conftest import (
     run,
 )
 
-from adbc_replicate.engine import EXIT_OK
+from adbc_replicate_hardcharger.engine import EXIT_OK
 
 pytestmark = pytest.mark.integration
 
@@ -76,26 +76,26 @@ def ext_config(prefix, **source_extra):
                        objects=[{"db_schemas": [SCHEMA], "target_db_schema": f"{prefix}_ext"}])
 
 
-def test_external_table_and_bfile_column_under_snapshot(ext_source, gizmosql, prefix):
+def test_external_table_and_bfile_column_under_snapshot(ext_source, hardcharger, prefix):
     # Before the fix: the external table failed with "AS OF" errors (ORA-08188 / ORA-01466) and the
     # BFILE table with "data type BFILE is not supported".
     summary, out = run(config=ext_config(prefix=prefix))
     assert summary.exit_code == EXIT_OK, out
     assert summary.stats["tables_copied"] == 4, out
-    assert sorted(query(conn=gizmosql, sql=f"SELECT id, name FROM {prefix}_ext.regions_ext")) == \
+    assert sorted(query(conn=hardcharger, sql=f"SELECT id, name FROM {prefix}_ext.regions_ext")) == \
         [(1, "North"), (2, "South"), (3, "West")]
-    assert [r[0] for r in query(conn=gizmosql, sql=f"DESCRIBE {prefix}_ext.documents")] == ["id", "title"]
+    assert [r[0] for r in query(conn=hardcharger, sql=f"DESCRIBE {prefix}_ext.documents")] == ["id", "title"]
     assert "skipping columns that can't be copied: EXTSRC.DOCUMENTS.FILE_REF (BFILE" in out, out
     assert "(excluded FILE_REF)" in out, out
     # LONG / LONG RAW columns are skipped the same way; the rest of each row is copied
     for table, column, kind in (("notes", "BODY", "LONG"), ("scans", "IMAGE", "LONG RAW")):
         assert f"EXTSRC.{table.upper()}.{column} ({kind}:" in out, out
-        assert query(conn=gizmosql, sql=f"SELECT * FROM {prefix}_ext.{table}") == [(1,)]
+        assert query(conn=hardcharger, sql=f"SELECT * FROM {prefix}_ext.{table}") == [(1,)]
 
 
-def test_external_tables_can_be_excluded(ext_source, gizmosql, prefix):
+def test_external_tables_can_be_excluded(ext_source, hardcharger, prefix):
     summary, out = run(config=ext_config(prefix=prefix, external_tables="exclude"))
     assert summary.exit_code == EXIT_OK, out
     assert summary.stats["tables_copied"] == 3, out
-    assert sorted(query(conn=gizmosql, sql=f"SELECT table_name FROM duckdb_tables() WHERE schema_name = '{prefix}_ext'")) == \
+    assert sorted(query(conn=hardcharger, sql=f"SELECT table_name FROM duckdb_tables() WHERE schema_name = '{prefix}_ext'")) == \
         [("documents",), ("notes",), ("scans",)]

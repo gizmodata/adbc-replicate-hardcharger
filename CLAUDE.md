@@ -4,31 +4,30 @@ Project notes for Claude and other contributors.
 
 ## What this is
 
-`adbc-replicate`: config-driven ADBC → ADBC replication into GizmoSQL or Hardcharger (or DuckDB). Python;
-the data path is Arrow C streams between drivers (`fetch_record_batch` → `adbc_ingest`), so
-Python never touches rows. It generalizes per-customer jobs like
-the Snowflake → GizmoSQL loader behind the Vaden Automotive case study (its lessons are
-what the defaults here encode: 12 MiB batch coalescing, 32 MiB gRPC cap, one catalog snapshot
-instead of per-object queries, `abandoned` runs). Planned later: a GizmoData Cloud wizard
-that writes this config, so keep the config schema, `plan --format json` and the event
-stream stable and UI-friendly.
+`adbc-replicate-hardcharger`: config-driven ADBC → ADBC replication into Hardcharger (GizmoData's
+DuckDB 2.0 server, over Warp SQL), the only target. Python; the data path is Arrow C streams between
+drivers (`fetch_record_batch` → `adbc_ingest`), so Python never touches rows. Derived from the public
+gizmodata/adbc-replicate (0.6.0), whose lessons the defaults encode (12 MiB batch coalescing, one catalog
+snapshot instead of per-object queries, `abandoned` runs). This repository is INTERNAL until Hardcharger is
+announced: never push to or mention it in the public adbc-replicate. Keep the config schema,
+`plan --format json` and the event stream stable and UI-friendly (a wizard may write the config).
 
 ## Layout
 
 ```
-src/adbc_replicate/config.py      pydantic models = the config contract (+ JSON Schema)
-src/adbc_replicate/planner.py     rules + source catalog -> Plan (tables, views, name_map)
-src/adbc_replicate/engine.py      run: consistency, parallel copies, change detection, views
-src/adbc_replicate/sources/*.py   one plugin per database (base.py is the interface)
-src/adbc_replicate/targets/       DuckDB-family targets (GizmoSQL, Hardcharger, DuckDB)
-src/adbc_replicate/views.py       sqlglot translation (Oracle rewrites, name re-pointing)
-src/adbc_replicate/state.py       sync state / run log tables in the target
-tests/unit                        no servers; DuckDB -> DuckDB engine tests, README YAML check
-tests/integration                 real GizmoSQL + Oracle + PostgreSQL (docker-compose.yml);
-                                  Snowflake tests are marker `snowflake` (need credentials);
-                                  Hardcharger tests are marker `hardcharger` (driver built from
-                                  gizmodata/hardcharger-adbc in CI until it is on PyPI)
-charts/adbc-replicate             Helm CronJob
+src/adbc_replicate_hardcharger/config.py      pydantic models = the config contract (+ JSON Schema)
+src/adbc_replicate_hardcharger/planner.py     rules + source catalog -> Plan (tables, views, name_map)
+src/adbc_replicate_hardcharger/engine.py      run: consistency, parallel copies, change detection, views
+src/adbc_replicate_hardcharger/sources/*.py   one plugin per database (base.py is the interface)
+src/adbc_replicate_hardcharger/targets/       the Hardcharger target (DuckDB SQL, partitioned ingest)
+src/adbc_replicate_hardcharger/views.py       sqlglot translation (Oracle rewrites, name re-pointing)
+src/adbc_replicate_hardcharger/state.py       sync state / run log tables in the target
+tests/unit                        no servers: config, views, matching, README YAML check
+tests/integration                 real Hardcharger + Oracle + PostgreSQL (docker-compose.yml): engine
+                                  tests from a DuckDB file (each in a catalog attached for it), every
+                                  source, types, and every README config run for real;
+                                  Snowflake tests are marker `snowflake` (need credentials)
+charts/adbc-replicate-hardcharger             Helm CronJob
 ```
 
 ## Conventions
@@ -39,15 +38,21 @@ charts/adbc-replicate             Helm CronJob
   `all` extra skips it there). Dependency floors are the latest releases (the tool gets its own
   venv/container): raise them when bumping rather than adding compatibility code. The
   lowest-dependencies CI job installs exactly the floors.
-- Tests read only `ADBC_REPLICATE_TEST_*` variables: developer shells export real
-  `GIZMOSQL_*` credentials. Docker addresses are `127.0.0.1`, never `localhost`.
+- Tests read only `ADBC_REPLICATE_HARDCHARGER_TEST_*` variables: developer shells export real
+  credentials under generic names. Docker addresses are `127.0.0.1`, never `localhost`.
+- adbc-driver-hardcharger isn't on PyPI yet: CI's `driver` job builds it from gizmodata/hardcharger-adbc at
+  a pinned commit (read-only deploy keys DEPLOY_KEY_HARDCHARGER_ADBC / DEPLOY_KEY_WARP_SQL_ADBC; zig for a
+  glibc-2.17 library) and every job installs that artifact; Docker builds find it in `wheels/`. The test
+  server is `ghcr.io/gizmodata/hardcharger:main`, pulled with GITHUB_TOKEN (the package grants this repo).
 - Integration tests FAIL (never skip) when a server is unreachable.
-- Every YAML block in README.md is validated by tests/unit/test_readme.py; quick-start
-  output in the README was captured from a real run — re-capture it if output changes.
-- Releases: bump `src/adbc_replicate/__init__.py`, `charts/adbc-replicate/Chart.yaml`
+- Every YAML block in README.md is validated by tests/unit/test_readme.py, and every config example runs
+  for real in tests/integration/test_readme_examples.py (sources seeded under the example's names);
+  quick-start output in the README was captured from a real run — re-capture it if output changes.
+- Releases: bump `src/adbc_replicate_hardcharger/__init__.py`, `charts/adbc-replicate-hardcharger/Chart.yaml`
   (version + appVersion) and CHANGELOG together; tag `vX.Y.Z`. release.yml re-runs ci.yml on
-  the tag and checks all three versions match before publishing to PyPI, GHCR (image + chart)
-  and creating the GitHub Release.
+  the tag and checks all three versions match, then waits for an approval of the `release` environment
+  before publishing to PyPI, GHCR (image + chart) and creating the GitHub Release; it also refuses to
+  publish while adbc-driver-hardcharger isn't on PyPI. Tag only on Philip's go.
 
 ## Gotchas found the hard way
 
@@ -62,9 +67,12 @@ charts/adbc-replicate             Helm CronJob
 - sqlglot silently drops Oracle `(+)` when generating; always run `eliminate_join_marks` first.
   sqlglot renamed `Select.args["from"]` to `"from_"` — use the `_FROM` constant in views.py.
 - DuckDB can't resolve `"x"."t"` when a catalog and a db_schema are both named `x`; target
-  DDL and translated views qualify with the catalog exactly in that case.
+  DDL and translated views qualify with the catalog exactly in that case. DuckDB 2.0 (Hardcharger 0.3.0)
+  still refuses such a view stored in catalog `x` even fully qualified (it works from another catalog), so
+  those views are reported (`test_catalog_named_like_a_db_schema`).
+- DuckDB flags every database's `main` schema as `internal` in `duckdb_schemas()`; the DuckDB source lists
+  it anyway (it used to drop it, so `db_schemas: [main]` copied nothing).
 - DuckDB's ADBC driver supports ingest mode `replace` only from 1.5.x (floor: 1.5.6).
-- The GizmoSQL driver's wheels need glibc >= 2.34 (Docker base: bookworm or newer).
 - Snowflake shared (imported) databases have no time travel: `AT(TIMESTAMP => …)` fails with
   000707 on every table (found on SNOWFLAKE_SAMPLE_DATA), so the plan refuses snapshot mode
   there (`INFORMATION_SCHEMA.DATABASES.TYPE = 'IMPORTED DATABASE'`).
@@ -90,12 +98,9 @@ charts/adbc-replicate             Helm CronJob
   query, so `_case_sensitive_references` refuses it (planner passes exact names in `Plan.column_names`).
 - DuckDB 1.5.6 `strftime()` on a `TIMESTAMP_S` before 1677 fails ("Could not convert Timestamp(US) to
   Timestamp(NS)"); cast to `TIMESTAMP` first when formatting dates that may be that old.
-- An audit that runs heavy views on a pico GizmoSQL cluster (1 GB, `memory_limit` 1 GB) can OOM-kill the
-  server: DuckDB's RSS goes well past `memory_limit`. Reproduce heavy views locally (copy the tables to a DuckDB
-  file, `threads=1`, same `memory_limit`, `/usr/bin/time -l`) instead of on a customer's cluster.
-- GizmoSQL behind nginx: long DuckDB error texts (DuckLake commit failures, view binder errors
-  quoting the whole statement) arrive as `RST_STREAM INTERNAL_ERROR` instead of the message.
-  Reproduce against a local DuckDB file target (`--row-limit 0`, schema only) to read them.
+- An audit that runs heavy views on a small server (1 GB `memory_limit`) can OOM-kill it: DuckDB's RSS goes
+  well past `memory_limit`. Reproduce heavy views locally (copy the tables to a DuckDB file, `threads=1`,
+  same `memory_limit`, `/usr/bin/time -l`) instead of on a customer's server.
 - The Snowflake CI user (`ADBC_REPLICATE_CI`) has only PUBLIC: it can read the sample share and
   use SNOWFLAKE_LEARNING_WH, nothing else. Snowflake tests must stay read-only.
 - DuckDB's Arrow export silently changes TIMETZ (drops the offset), BIT and BIGNUM (internal bytes), also
@@ -104,10 +109,12 @@ charts/adbc-replicate             Helm CronJob
 - Hardcharger (DuckDB 2.0, Warp SQL): bulk ingest, partitioned or not, joins the session's transaction
   (rollback undoes it); `test_ingest_parts_roll_back_with_the_transaction` proves it through a recording
   proxy. DuckDB 2.0 `MERGE` refuses several source rows per key (1.5.6 picked one); `merge()` checks first
-  either way. Hardcharger refuses a HUGEINT >= 10^38 instead of sending it (1.5/GizmoSQL send an
+  either way. Hardcharger refuses a HUGEINT >= 10^38 instead of sending it (DuckDB 1.5 sends an
   out-of-range decimal128). An Arrow `null` column becomes VARCHAR (DuckDB: its NULL type).
-- Hardcharger 0.3.0's sensitive-path guard refuses any SQL string literal containing `{` (`'{"a": 1}'`,
-  `'^[0-9]{3}$'`) as a "user credential store" path; bound parameters pass. Tests build JSON with
-  `json_object()` instead.
+- Hardcharger 0.3.0's sensitive-path guard refuses any SQL string literal containing `{` or `*`
+  (`'{"a": 1}'`, `'^[0-9]{3}$'`, `'*'`) as a "user credential store" path; bound parameters pass. Tests build
+  JSON with `json_object()`, and the Oracle view-function tests pin exactly which translations it refuses.
+- A global search-and-replace of `ADBC_REPLICATE_` also rewrites Oracle object names in tests
+  (`ADBC_REPLICATE_EXT` is a directory object); rename identifiers by what they are, not by prefix.
 - `typeof(x)` in a probe: a column named like a keyword (`null`, `binary`) parses as the keyword, not the
   column. Probe types with a neutral column name (`v`).

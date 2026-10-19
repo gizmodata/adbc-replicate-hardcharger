@@ -4,9 +4,9 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "adbc-replicate.fullname" . }}
+  name: {{ include "adbc-replicate-hardcharger.fullname" . }}
   labels:
-    {{- include "adbc-replicate.labels" . | nindent 4 }}
+    {{- include "adbc-replicate-hardcharger.labels" . | nindent 4 }}
 data:
   {{- if .Values.configFile }}
   replicate.yaml: {{ .Values.configFile | quote }}
@@ -19,9 +19,9 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "adbc-replicate.fullname" . }}-view-overrides
+  name: {{ include "adbc-replicate-hardcharger.fullname" . }}-view-overrides
   labels:
-    {{- include "adbc-replicate.labels" . | nindent 4 }}
+    {{- include "adbc-replicate-hardcharger.labels" . | nindent 4 }}
 data:
   {{- range $name, $sql := .Values.viewOverrides }}
   {{ $name }}: |

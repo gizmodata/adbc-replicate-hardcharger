@@ -3,7 +3,7 @@
 
 import duckdb
 
-from adbc_replicate.views import translate_view
+from adbc_replicate_hardcharger.views import translate_view
 
 
 def tr(definition, schema="HR"):

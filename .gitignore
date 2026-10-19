@@ -13,3 +13,5 @@ build/
 !.env.example
 *.tgz
 .idea/
+wheels/*.whl
+wheels/*.tar.gz

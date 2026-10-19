@@ -1,5 +1,5 @@
 """SIGTERM mid-load (what Kubernetes sends on eviction) must cancel every in-flight load and leave no
-GizmoSQL session holding a transaction. Found on a real run: a killed process left sessions whose open
+Hardcharger session holding a transaction. Found on a real run: a killed process left sessions whose open
 transactions blocked the next run's replace of the same tables ("Catalog write-write conflict")."""
 
 import os
@@ -12,7 +12,7 @@ import pytest
 import yaml
 from conftest import execute, make_config, postgres_source, query, run
 
-from adbc_replicate.engine import EXIT_OK
+from adbc_replicate_hardcharger.engine import EXIT_OK
 
 pytestmark = pytest.mark.integration
 
@@ -32,12 +32,12 @@ def bulk(postgres):
     execute(conn=postgres, statements=["DROP SCHEMA IF EXISTS bulk CASCADE"])
 
 
-def test_sigterm_cancels_in_flight_loads_and_leaves_no_locks(bulk, gizmosql, prefix, tmp_path):
+def test_sigterm_cancels_in_flight_loads_and_leaves_no_locks(bulk, hardcharger, prefix, tmp_path):
     config = make_config(prefix=prefix, source=postgres_source(), parallelism=2,
                          objects=[{"db_schemas": [bulk], "materialize_views": ["*"], "target_db_schema": f"{prefix}_bulk"}])
     path = tmp_path / "replicate.yaml"
     path.write_text(yaml.safe_dump(config.model_dump(mode="json", exclude_none=True)), encoding="utf-8")
-    process = subprocess.Popen([sys.executable, "-m", "adbc_replicate.cli", "run", "--config", str(path)],
+    process = subprocess.Popen([sys.executable, "-m", "adbc_replicate_hardcharger.cli", "run", "--config", str(path)],
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                                env={**os.environ, "PYTHONUNBUFFERED": "1"})
     output, copying = [], 0
@@ -55,10 +55,10 @@ def test_sigterm_cancels_in_flight_loads_and_leaves_no_locks(bulk, gizmosql, pre
     assert "🛑 SIGTERM: cancelling" in text and "Run interrupted" in text, text
     # both loads were cancelled mid-flight (not finished before the signal arrived)
     assert "❌ bulk.big_a" in text and "❌ bulk.big_b" in text, text
-    assert query(conn=gizmosql, sql=f"SELECT status FROM {prefix}_state.run_log")[0][0] == "interrupted"
+    assert query(conn=hardcharger, sql=f"SELECT status FROM {prefix}_state.run_log")[0][0] == "interrupted"
 
     # The proof that no session kept a transaction: a new run replaces the same tables at once.
     summary, out = run(config=config)
     assert summary.exit_code == EXIT_OK, out
     assert summary.stats["tables_copied"] == 2, out
-    assert query(conn=gizmosql, sql=f"SELECT count(*) FROM {prefix}_bulk.big_a")[0][0] == 3_000
+    assert query(conn=hardcharger, sql=f"SELECT count(*) FROM {prefix}_bulk.big_a")[0][0] == 3_000

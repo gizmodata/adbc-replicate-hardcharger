@@ -1,4 +1,4 @@
-"""The adbc-replicate command line."""
+"""The adbc-replicate-hardcharger command line."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from .planner import PlanError
 from .views import ViewTranslationError, create_view_sql, load_override, translate_view
 
 CONFIG_OPTION = click.option("-c", "--config", "config_path", required=True, type=click.Path(dir_okay=False),
-                             envvar="ADBC_REPLICATE_CONFIG", help="Replication config (YAML or JSON).")
+                             envvar="ADBC_REPLICATE_HARDCHARGER_CONFIG", help="Replication config (YAML or JSON).")
 ENV_FILE_OPTION = click.option("--env-file", type=click.Path(dir_okay=False), envvar="DOTENV_PATH",
                                help="Load environment variables from this file first (existing variables win).")
 
@@ -41,9 +41,9 @@ def _fail(message: str, code: int = EXIT_CONFIG) -> None:
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
-@click.version_option(version=__version__, prog_name="adbc-replicate")
+@click.version_option(version=__version__, prog_name="adbc-replicate-hardcharger")
 def main() -> None:
-    """🔁 adbc-replicate — stream whole schemas from one database into another over ADBC.
+    """🔁 adbc-replicate-hardcharger — stream whole schemas from one database into another over ADBC.
 
     Describe what to replicate in a YAML config, check it with `plan`, then `run` it.
     """
@@ -116,7 +116,7 @@ def _run_interruptibly(replicator: Replicator, reporter: Reporter):
 
     previous = {sig: signal.signal(sig, on_signal) for sig in (signal.SIGINT, signal.SIGTERM)}
     try:
-        worker = threading.Thread(target=work, name="adbc-replicate-run", daemon=True)
+        worker = threading.Thread(target=work, name="adbc-replicate-hardcharger-run", daemon=True)
         worker.start()
         while worker.is_alive():
             worker.join(timeout=0.25)
@@ -346,9 +346,9 @@ def schema() -> None:
 
 
 EXAMPLE_CONFIG = """\
-# adbc-replicate config — see https://github.com/gizmodata/adbc-replicate
+# adbc-replicate-hardcharger config — see https://github.com/gizmodata/adbc-replicate-hardcharger
 version: 1
-name: oracle-to-gizmosql
+name: oracle-to-hardcharger
 
 source:
   type: oracle
@@ -358,10 +358,10 @@ source:
   consistency: serializable      # every table read from one point in time
 
 target:
-  type: gizmosql
-  uri: gizmosql://gizmosql.example.com:31337
-  username: ${GIZMOSQL_USERNAME}
-  password: ${GIZMOSQL_PASSWORD}
+  type: hardcharger
+  uri: hardcharger://hardcharger.example.com   # HTTPS, port 31337
+  username: ${HARDCHARGER_USERNAME}
+  password: ${HARDCHARGER_PASSWORD}
 
 objects:
   - db_schemas: [HR, SALES]
@@ -383,7 +383,7 @@ def init(path) -> None:
     if p.exists():
         _fail(message=f"{path} already exists")
     p.write_text(EXAMPLE_CONFIG, encoding="utf-8")
-    click.echo(f"📝 Wrote {path}. Edit it, then: adbc-replicate plan --config {path}")
+    click.echo(f"📝 Wrote {path}. Edit it, then: adbc-replicate-hardcharger plan --config {path}")
 
 
 if __name__ == "__main__":

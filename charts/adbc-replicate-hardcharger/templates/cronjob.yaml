@@ -2,9 +2,9 @@
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: {{ include "adbc-replicate.fullname" . }}
+  name: {{ include "adbc-replicate-hardcharger.fullname" . }}
   labels:
-    {{- include "adbc-replicate.labels" . | nindent 4 }}
+    {{- include "adbc-replicate-hardcharger.labels" . | nindent 4 }}
 spec:
   schedule: {{ .Values.schedule | quote }}
   {{- with .Values.timeZone }}
@@ -31,7 +31,7 @@ spec:
       template:
         metadata:
           labels:
-            {{- include "adbc-replicate.labels" . | nindent 12 }}
+            {{- include "adbc-replicate-hardcharger.labels" . | nindent 12 }}
             {{- with .Values.podLabels }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -43,7 +43,7 @@ spec:
         spec:
           restartPolicy: Never
           {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
-          serviceAccountName: {{ default (include "adbc-replicate.fullname" .) .Values.serviceAccount.name }}
+          serviceAccountName: {{ default (include "adbc-replicate-hardcharger.fullname" .) .Values.serviceAccount.name }}
           {{- end }}
           {{- with .Values.imagePullSecrets }}
           imagePullSecrets:
@@ -52,7 +52,7 @@ spec:
           securityContext:
             {{- toYaml .Values.podSecurityContext | nindent 12 }}
           containers:
-            - name: adbc-replicate
+            - name: adbc-replicate-hardcharger
               image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
               imagePullPolicy: {{ .Values.image.pullPolicy }}
               args:
@@ -65,7 +65,7 @@ spec:
               {{- if or .Values.existingSecret .Values.secretEnv }}
               envFrom:
                 - secretRef:
-                    name: {{ include "adbc-replicate.secretName" . }}
+                    name: {{ include "adbc-replicate-hardcharger.secretName" . }}
               {{- end }}
               {{- if or .Values.env $dotenv }}
               env:
@@ -102,16 +102,16 @@ spec:
           volumes:
             - name: config
               configMap:
-                name: {{ include "adbc-replicate.fullname" . }}
+                name: {{ include "adbc-replicate-hardcharger.fullname" . }}
             {{- if .Values.viewOverrides }}
             - name: view-overrides
               configMap:
-                name: {{ include "adbc-replicate.fullname" . }}-view-overrides
+                name: {{ include "adbc-replicate-hardcharger.fullname" . }}-view-overrides
             {{- end }}
             {{- if $dotenv }}
             - name: dotenv
               secret:
-                secretName: {{ .Values.dotenvSecret.name | default (printf "%s-dotenv" (include "adbc-replicate.fullname" .)) }}
+                secretName: {{ .Values.dotenvSecret.name | default (printf "%s-dotenv" (include "adbc-replicate-hardcharger.fullname" .)) }}
                 defaultMode: 0440
                 items:
                   - key: {{ if .Values.dotenvSecret.name }}{{ .Values.dotenvSecret.key | default ".env" }}{{ else }}.env{{ end }}

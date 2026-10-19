@@ -1,0 +1,14 @@
+apiVersion: v2
+name: adbc-replicate-hardcharger
+description: Scheduled ADBC-to-ADBC replication into Hardcharger (a Kubernetes CronJob running adbc-replicate-hardcharger)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/gizmodata/adbc-replicate-hardcharger
+sources:
+  - https://github.com/gizmodata/adbc-replicate-hardcharger
+maintainers:
+  - name: GizmoData
+    email: info@gizmodata.com
+    url: https://gizmodata.com
+keywords: [adbc, arrow, replication, hardcharger, oracle, postgresql, snowflake, duckdb]

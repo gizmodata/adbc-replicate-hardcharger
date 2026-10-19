@@ -1,8 +1,8 @@
 import pyarrow as pa
 import pytest
 
-from adbc_replicate.arrowutil import coalesce, transform
-from adbc_replicate.matching import Pattern, PatternSet, TablePatternSet
+from adbc_replicate_hardcharger.arrowutil import coalesce, transform
+from adbc_replicate_hardcharger.matching import Pattern, PatternSet, TablePatternSet
 
 
 def test_globs_are_case_insensitive_and_anchored():
@@ -72,13 +72,15 @@ def test_strict_decimal_cast_fails_loudly():
 
 
 def test_transient_errors_include_source_network_reads():
-    from adbc_replicate.targets.duckdb import _failed_before_running, is_transient
-    snowflake_chunk = ("OperationalError: UNKNOWN: [GizmoSQL] [FlightSQL] input/output error: IOError: [Snowflake] "
+    from adbc_replicate_hardcharger.targets.hardcharger import _failed_before_running, is_transient
+    snowflake_chunk = ("OperationalError: IO: [warpsql] bulk ingest into lineitem: IOError: [Snowflake] "
                        "arrow/ipc: could not read message body: read tcp 10.0.0.1:59972->16.15.191.166:443: "
                        "read: operation timed out")
     assert is_transient(error=snowflake_chunk)
-    assert is_transient(error="UNAVAILABLE: [FlightSQL] the connection is draining (Unavailable; DoPut)")
-    assert not is_transient(error="INVALID_ARGUMENT: Binder Error: column x not found (InvalidArgument; Prepare)")
+    draining = "UNAVAILABLE: [warpsql] ExecuteQuery: shutting down (server_draining, HTTP 503, request r_1)"
+    assert is_transient(error=draining) and _failed_before_running(error=Exception(draining))
+    assert not is_transient(error="INVALID_ARGUMENT: [warpsql] ExecuteQuery: Binder Error: column x not found "
+                                  "(sql_error, HTTP 400, request r_2)")
     assert not is_transient(error="ORA-01722: invalid number")
-    # only a target that was unavailable during Prepare is known not to have run the statement
-    assert not _failed_before_running(error=Exception(snowflake_chunk + " (Prepare)"))
+    # a network failure mid-statement may have run it: never resent
+    assert not _failed_before_running(error=Exception(snowflake_chunk))

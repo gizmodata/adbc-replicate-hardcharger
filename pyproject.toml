@@ -3,16 +3,16 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "adbc-replicate"
+name = "adbc-replicate-hardcharger"
 dynamic = ["version"]
-description = "Config-driven ADBC-to-ADBC replication: stream whole schemas from Oracle, PostgreSQL, Snowflake, DuckDB or Hardcharger into GizmoSQL or Hardcharger, with no data materialised on the client."
+description = "Config-driven ADBC-to-ADBC replication into Hardcharger: stream whole schemas from Oracle, PostgreSQL, Snowflake, DuckDB or Hardcharger, with no data materialised on the client."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
 authors = [{ name = "GizmoData LLC", email = "info@gizmodata.com" }]
-keywords = ["adbc", "arrow", "replication", "gizmosql", "hardcharger", "duckdb", "oracle", "postgresql", "snowflake", "etl", "elt"]
+keywords = ["adbc", "arrow", "replication", "hardcharger", "duckdb", "oracle", "postgresql", "snowflake", "etl", "elt"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Topic :: Database",
     "Programming Language :: Python :: 3",
@@ -23,6 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.15",
 ]
 dependencies = [
+    "adbc-driver-hardcharger>=0.1.0",
     "adbc-driver-manager>=1.12.0",
     "pyarrow>=26.0.0",
     "sqlglot>=30.23.0",
@@ -38,48 +39,42 @@ dependencies = [
 oracle = ["adbc-driver-oracle>=1.0.1"]
 postgresql = ["adbc-driver-postgresql>=1.12.0"]
 snowflake = ["adbc-driver-snowflake>=1.11.0"]
-gizmosql = ["adbc-driver-gizmosql>=2.0.15"]
 duckdb = ["duckdb>=1.5.6,<2"]
-# Not in `all` (nor `dev`) until adbc-driver-hardcharger is on PyPI: pip couldn't resolve them.
-hardcharger = ["adbc-driver-hardcharger>=0.1.0"]
 all = [
     "adbc-driver-oracle>=1.0.1",
     "adbc-driver-postgresql>=1.12.0",
     "adbc-driver-snowflake>=1.11.0",
-    "adbc-driver-gizmosql>=2.0.15",
     # DuckDB publishes no Python 3.15 wheels yet (building it from source takes ~30 min)
     "duckdb>=1.5.6,<2; python_version < '3.15'",
 ]
 dev = [
-    "adbc-replicate[all]",
+    "adbc-replicate-hardcharger[all]",
     "pytest>=9.1.1",
     "ruff>=0.17.0",
 ]
 
 [project.scripts]
-adbc-replicate = "adbc_replicate.cli:main"
+adbc-replicate-hardcharger = "adbc_replicate_hardcharger.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/gizmodata/adbc-replicate"
-Repository = "https://github.com/gizmodata/adbc-replicate"
-Changelog = "https://github.com/gizmodata/adbc-replicate/blob/main/CHANGELOG.md"
-Issues = "https://github.com/gizmodata/adbc-replicate/issues"
+Homepage = "https://github.com/gizmodata/adbc-replicate-hardcharger"
+Repository = "https://github.com/gizmodata/adbc-replicate-hardcharger"
+Changelog = "https://github.com/gizmodata/adbc-replicate-hardcharger/blob/main/CHANGELOG.md"
+Issues = "https://github.com/gizmodata/adbc-replicate-hardcharger/issues"
 
 [tool.hatch.version]
-path = "src/adbc_replicate/__init__.py"
+path = "src/adbc_replicate_hardcharger/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/adbc_replicate"]
+packages = ["src/adbc_replicate_hardcharger"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Snowflake tests need credentials: run them explicitly with -m snowflake. Hardcharger tests need
-# adbc-driver-hardcharger (not on PyPI yet) and a Hardcharger server: -m hardcharger.
-addopts = "-m 'not snowflake and not hardcharger'"
+# Snowflake tests need credentials: run them explicitly with -m snowflake.
+addopts = "-m 'not snowflake'"
 markers = [
-    "integration: needs the GizmoSQL, Oracle and PostgreSQL test containers (see docker-compose.yml)",
-    "snowflake: needs ADBC_REPLICATE_TEST_SNOWFLAKE_* credentials (CI: main pushes and release tags)",
-    "hardcharger: needs adbc-driver-hardcharger and a Hardcharger server (see docker-compose.yml), plus GizmoSQL, Oracle and PostgreSQL",
+    "integration: needs the Hardcharger, Oracle and PostgreSQL test containers (see docker-compose.yml)",
+    "snowflake: needs ADBC_REPLICATE_HARDCHARGER_TEST_SNOWFLAKE_* credentials (CI: main pushes and release tags)",
 ]
 
 [tool.ruff]

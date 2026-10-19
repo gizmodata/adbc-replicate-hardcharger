@@ -4,14 +4,18 @@ unless a mask says what to send instead or the column is excluded. Each refusal 
 the same column correctly once the config says how."""
 
 import io
+import uuid
 
 import duckdb
 import pytest
+from conftest import HARDCHARGER_PASSWORD, HARDCHARGER_URI, HARDCHARGER_USERNAME, attached_catalog, detach, query
 
-from adbc_replicate.config import parse_config
-from adbc_replicate.engine import EXIT_OK, EXIT_VIEW_ERRORS, Replicator, RunOptions
-from adbc_replicate.events import Reporter
-from adbc_replicate.planner import PlanError
+from adbc_replicate_hardcharger.config import parse_config
+from adbc_replicate_hardcharger.engine import EXIT_OK, EXIT_VIEW_ERRORS, Replicator, RunOptions
+from adbc_replicate_hardcharger.events import Reporter
+from adbc_replicate_hardcharger.planner import PlanError
+
+pytestmark = pytest.mark.integration
 
 AS_TEXT = {"strategy": "expression", "sql": "CAST({column} AS VARCHAR)"}
 
@@ -27,7 +31,7 @@ LOSSY = {
 
 
 @pytest.fixture
-def paths(tmp_path):
+def paths(tmp_path, hardcharger):
     src = tmp_path / "source.duckdb"
     con = duckdb.connect(database=str(src))
     columns = ", ".join(f"{name} {spec[0]}" for name, spec in LOSSY.items())
@@ -44,12 +48,16 @@ def paths(tmp_path):
         CREATE VIEW app.v_tz AS SELECT id, '12:34:56+05:30'::TIMETZ AS tz FROM other.o;
     """)
     con.close()
-    return {"source": str(src), "target": str(tmp_path / "target.duckdb")}
+    catalog = "c" + uuid.uuid4().hex[:12]
+    target = attached_catalog(hardcharger=hardcharger, name=catalog)
+    yield {"source": str(src), "catalog": catalog, "target": target}
+    detach(hardcharger=hardcharger, conn=target, name=catalog)
 
 
 def config(paths, **extra):
     data = {"version": 1, "source": {"type": "duckdb", "path": paths["source"]},
-            "target": {"type": "duckdb", "path": paths["target"], "checkpoint": False},
+            "target": {"uri": HARDCHARGER_URI, "username": HARDCHARGER_USERNAME, "password": HARDCHARGER_PASSWORD,
+                       "catalog": paths["catalog"], "checkpoint": False},
             "objects": [{"db_schemas": ["app"], "views": []}]}
     data.update(extra)
     return parse_config(data=data)
@@ -62,11 +70,7 @@ def run(cfg):
 
 
 def target(paths, sql):
-    con = duckdb.connect(database=paths["target"], read_only=True)
-    try:
-        return con.execute(query=sql).fetchall()
-    finally:
-        con.close()
+    return query(conn=paths["target"], sql=sql)
 
 
 def test_lossy_columns_are_refused_before_any_data_moves(paths):
@@ -78,7 +82,7 @@ def test_lossy_columns_are_refused_before_any_data_moves(paths):
     assert "app.safe" not in message                    # field names "bit" / bignum and TIME are fine
     assert "CAST({column} AS VARCHAR)" in message and "exclude: [COLUMN]" in message
     # nothing was copied, not even the safe table (only the run log exists)
-    assert target(paths=paths, sql="SELECT count(*) FROM duckdb_tables() WHERE schema_name = 'app'") == [(0,)]
+    assert target(paths=paths, sql="SELECT count(*) FROM duckdb_tables() WHERE database_name = current_database() AND schema_name = 'app'") == [(0,)]
 
 
 def test_masked_as_text_the_same_columns_arrive_exactly(paths):
@@ -103,7 +107,7 @@ def test_a_view_is_not_materialized_with_a_lossy_column(paths):
     summary, out = run(cfg=config(paths=paths, objects=objects, views=views))
     assert summary.exit_code == EXIT_VIEW_ERRORS and "app.v_tz" in summary.view_failures, out
     assert "app.v_tz won't be materialized" in out and "without its UTC offset" in out, out
-    assert target(paths=paths, sql="SELECT count(*) FROM duckdb_tables() WHERE table_name = 'v_tz'") == [(0,)]
+    assert target(paths=paths, sql="SELECT count(*) FROM duckdb_tables() WHERE database_name = current_database() AND table_name = 'v_tz'") == [(0,)]
     summary, out = run(cfg=config(paths=paths, objects=objects, views=views,
                                   columns=[{"tables": ["app.v_tz"], "mask": {"tz": AS_TEXT}}]))
     assert summary.exit_code == EXIT_OK, out

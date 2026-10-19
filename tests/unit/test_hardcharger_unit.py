@@ -7,10 +7,10 @@ import types
 
 import pytest
 
-from adbc_replicate.config import ConfigError, json_schema, parse_config
-from adbc_replicate.sources import make_source
-from adbc_replicate.targets import make_target
-from adbc_replicate.targets.duckdb import _failed_before_running, is_transient
+from adbc_replicate_hardcharger.config import ConfigError, json_schema, parse_config
+from adbc_replicate_hardcharger.sources import make_source
+from adbc_replicate_hardcharger.targets import make_target
+from adbc_replicate_hardcharger.targets.hardcharger import _failed_before_running, is_transient
 
 
 def config(source=None, target=None, **extra):

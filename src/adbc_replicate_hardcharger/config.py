@@ -1,6 +1,6 @@
 """The replication config: a versioned YAML (or JSON) document validated by pydantic.
 
-The same models produce the JSON Schema (`adbc-replicate schema`), so a UI can generate a
+The same models produce the JSON Schema (`adbc-replicate-hardcharger schema`), so a UI can generate a
 config that the CLI accepts byte for byte. Secrets are never meant to live in the file:
 any string value may reference the environment as ``${VAR}`` or ``${VAR:-default}``, and
 substitution happens after YAML parsing, so a password containing YAML syntax can't change
@@ -123,38 +123,17 @@ SourceConfig = Annotated[
 ]
 
 
-class _TargetBase(_Model):
-    options: dict[str, str] = Field(default_factory=dict, description="Extra ADBC database options.")
+class HardchargerTarget(_HardchargerConnection):
+    """The Hardcharger server to load into: the only target type."""
+
+    type: Literal["hardcharger"] = "hardcharger"
+    options: dict[str, str] = Field(default_factory=dict, description="Extra ADBC database options "
+                                                                      "(adbc.hardcharger.*, adbc.warp.*).")
     checkpoint: bool = Field(
         default=True,
         description="Run CHECKPOINT before and after a load so the WAL is folded into the database "
-                    "file. Needs the admin role on GizmoSQL and Hardcharger; a failure is only a warning.",
+                    "file. Needs the admin role; a failure is only a warning.",
     )
-
-
-class GizmoSQLTarget(_TargetBase):
-    type: Literal["gizmosql"]
-    uri: str = Field(description="e.g. gizmosql://host:31337 (TLS) or gizmosql://host:31337?transport=tcp")
-    username: str | None = None
-    password: str | None = None
-    tls_skip_verify: bool = False
-    catalog: str | None = Field(default=None, description="Target catalog (attached database) to load into. "
-                                       "Default: the server's current catalog.")
-    max_msg_size: int = Field(
-        default=32 * 1024 * 1024,
-        description="gRPC message size the driver allows itself (bytes). Must exceed ingest.batch_bytes "
-                    "plus framing; kept modest because the driver's memory grows with it.",
-    )
-
-
-class DuckDBTarget(_TargetBase):
-    type: Literal["duckdb"]
-    path: str = Field(description="DuckDB database file to load into.")
-    catalog: str | None = None
-
-
-class HardchargerTarget(_HardchargerConnection, _TargetBase):
-    type: Literal["hardcharger"]
     catalog: str | None = Field(default=None, description="Target catalog (attached database) to load into. "
                                        "Default: the server's current catalog.")
     ingest_parts: int = Field(
@@ -163,9 +142,6 @@ class HardchargerTarget(_HardchargerConnection, _TargetBase):
                     "and committed as one (adbc.hardcharger.ingest.parts). Rows land in no defined order; "
                     "1 sends one stream in the source's order.",
     )
-
-
-TargetConfig = Annotated[GizmoSQLTarget | DuckDBTarget | HardchargerTarget, Field(discriminator="type")]
 
 
 # ---- What to replicate ------------------------------------------------------------------
@@ -369,17 +345,16 @@ class IngestConfig(_Model):
     )
     retries: int = Field(
         default=2, ge=0,
-        description="Re-load a table this many times after a transient connection error: gRPC "
-                    "'unavailable' (e.g. 'the connection is draining' when a proxy in front of GizmoSQL "
-                    "reloads), or a network read failing while the source result streams in (e.g. a "
-                    "Snowflake result chunk download timing out). Safe: a load is one target "
-                    "transaction, rolled back before the retry.",
+        description="Re-load a table this many times after a transient connection error: the target "
+                    "refusing new statements while it shuts down (server_draining), or a network read failing "
+                    "while the source result streams in (e.g. a Snowflake result chunk download timing out). "
+                    "Safe: a load is one target transaction, rolled back before the retry.",
     )
     retry_wait_seconds: float = Field(default=5.0, ge=0, description="Wait before the first retry; doubles each time.")
 
 
 class StateConfig(_Model):
-    db_schema: str = Field(default="_adbc_replicate",
+    db_schema: str = Field(default="_adbc_replicate_hardcharger",
                            description="Target db_schema holding sync state and the run log.")
 
 
@@ -407,7 +382,7 @@ class ReplicationConfig(_Model):
     version: Literal[1] = Field(description="Config format version.")
     name: str | None = Field(default=None, description="A label for this replication, recorded in the run log.")
     source: SourceConfig
-    target: TargetConfig
+    target: HardchargerTarget
     objects: list[ObjectRule] = Field(min_length=1)
     columns: list[ColumnRule] = Field(default_factory=list)
     naming: NamingConfig = Field(default_factory=NamingConfig)
@@ -438,8 +413,6 @@ class ReplicationConfig(_Model):
         if self.source.consistency == "snapshot" and self.source.type in ("duckdb", "hardcharger"):
             raise ValueError(f"consistency 'snapshot' isn't supported for a {self.source.type} source (DuckDB "
                              "can't share one snapshot between connections): use serializable")
-        if self.ingest.batch_bytes * 2 > getattr(self.target, "max_msg_size", 1 << 62):
-            raise ValueError("target.max_msg_size must be at least twice ingest.batch_bytes")
         return self
 
 
@@ -498,5 +471,5 @@ def load_config(path: str | Path) -> ReplicationConfig:
 def json_schema() -> dict:
     schema = ReplicationConfig.model_json_schema()
     schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
-    schema["title"] = "adbc-replicate config"
+    schema["title"] = "adbc-replicate-hardcharger config"
     return schema

@@ -1,5 +1,5 @@
 image:
-  repository: ghcr.io/gizmodata/adbc-replicate
+  repository: ghcr.io/gizmodata/adbc-replicate-hardcharger
   # Defaults to the chart's appVersion. Version tags are immutable, so IfNotPresent is safe.
   tag: ""
   pullPolicy: IfNotPresent
@@ -26,7 +26,7 @@ podFailurePolicy:
   rules:
     - action: FailJob
       onExitCodes:
-        containerName: adbc-replicate
+        containerName: adbc-replicate-hardcharger
         operator: In
         values: [2, 3]
 
@@ -34,7 +34,7 @@ podFailurePolicy:
 # mounted at /config/replicate.yaml. Reference secrets as ${VAR}; never put them here.
 config: {}
 #   version: 1
-#   name: oracle-to-gizmosql
+#   name: oracle-to-hardcharger
 #   source:
 #     type: oracle
 #     uri: oracle://oracle.example.com:1521/ORCLPDB1
@@ -42,10 +42,10 @@ config: {}
 #     password: ${ORACLE_PASSWORD}
 #     consistency: serializable
 #   target:
-#     type: gizmosql
-#     uri: gizmosql://gizmosql.example.com:31337
-#     username: ${GIZMOSQL_USERNAME}
-#     password: ${GIZMOSQL_PASSWORD}
+#     type: hardcharger
+#     uri: hardcharger://hardcharger.example.com
+#     username: ${HARDCHARGER_USERNAME}
+#     password: ${HARDCHARGER_PASSWORD}
 #   objects:
 #     - db_schemas: [HR]
 
@@ -57,7 +57,7 @@ configFile: ""
 # /config/view-overrides. Set config.views.overrides_dir: /config/view-overrides to use them.
 viewOverrides: {}
 
-# Extra CLI arguments for `adbc-replicate run`, e.g. ["--log-format", "json"].
+# Extra CLI arguments for `adbc-replicate-hardcharger run`, e.g. ["--log-format", "json"].
 extraArgs: []
 
 # Environment variables referenced by ${VAR} in the config.

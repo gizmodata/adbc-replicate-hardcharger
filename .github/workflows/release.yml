@@ -7,10 +7,15 @@ on:
 permissions:
   contents: read
 
+# A release is never cancelled halfway; a second tag waits for the first.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  # The full suite (unit, lowest deps, integration against real GizmoSQL/Oracle/PostgreSQL,
-  # Hardcharger, Python 3.15, Snowflake, Docker, Helm) on the tagged commit itself. Nothing publishes
-  # without it. packages: read lets the hardcharger job pull Hardcharger's image.
+  # The full suite (unit, lowest deps, integration against real Hardcharger/Oracle/PostgreSQL,
+  # Python 3.15, Snowflake, Docker, Helm) on the tagged commit itself. Nothing publishes without it.
+  # packages: read lets the jobs pull Hardcharger's image.
   tests:
     uses: ./.github/workflows/ci.yml
     secrets: inherit
@@ -33,17 +38,25 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           [ -n "$VERSION" ] || { echo "empty version"; exit 1; }
-          PKG=$(python -c "import re,pathlib; print(re.search(r'__version__ = \"(.+)\"', pathlib.Path('src/adbc_replicate/__init__.py').read_text()).group(1))")
-          CHART=$(awk '/^version:/ {print $2}' charts/adbc-replicate/Chart.yaml)
-          APP=$(awk '/^appVersion:/ {gsub(/"/, "", $2); print $2}' charts/adbc-replicate/Chart.yaml)
+          PKG=$(python -c "import re,pathlib; print(re.search(r'__version__ = \"(.+)\"', pathlib.Path('src/adbc_replicate_hardcharger/__init__.py').read_text()).group(1))")
+          CHART=$(awk '/^version:/ {print $2}' charts/adbc-replicate-hardcharger/Chart.yaml)
+          APP=$(awk '/^appVersion:/ {gsub(/"/, "", $2); print $2}' charts/adbc-replicate-hardcharger/Chart.yaml)
           echo "tag=$VERSION package=$PKG chart=$CHART appVersion=$APP"
           [ "$VERSION" = "$PKG" ] && [ "$VERSION" = "$CHART" ] && [ "$VERSION" = "$APP" ] || { echo "version mismatch"; exit 1; }
           grep -q "^## \[$VERSION\]" CHANGELOG.md || { echo "CHANGELOG.md has no [$VERSION] section"; exit 1; }
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Check every dependency is on PyPI (the package and the image install from there)
+        run: |
+          FLOOR=$(python -c "import re,pathlib; print(re.search(r'\"adbc-driver-hardcharger>=([^\"]+)\"', pathlib.Path('pyproject.toml').read_text()).group(1))")
+          [ -n "$FLOOR" ] || { echo "no adbc-driver-hardcharger floor in pyproject.toml"; exit 1; }
+          if ! curl -fsS "https://pypi.org/pypi/adbc-driver-hardcharger/$FLOOR/json" > /dev/null; then
+            echo "::error::adbc-driver-hardcharger $FLOOR is not on PyPI: publish the driver first"
+            exit 1
+          fi
       - run: pip install build
       - run: python -m build
       - uses: azure/setup-helm@v5
-      - run: helm package charts/adbc-replicate --destination dist-chart
+      - run: helm package charts/adbc-replicate-hardcharger --destination dist-chart
       - uses: actions/upload-artifact@v7
         with:
           name: dist
@@ -53,12 +66,20 @@ jobs:
           name: chart
           path: dist-chart/
 
-  pypi:
+  # Philip's go: the `release` environment requires his approval before anything is published.
+  approve:
     needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - run: echo "release ${{ needs.build.outputs.version }} approved"
+
+  pypi:
+    needs: [build, approve]
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/adbc-replicate
+      url: https://pypi.org/p/adbc-replicate-hardcharger
     permissions:
       id-token: write
     steps:
@@ -72,13 +93,13 @@ jobs:
       - name: Confirm PyPI serves the new version
         run: |
           for _ in $(seq 1 30); do
-            curl -fsS "https://pypi.org/pypi/adbc-replicate/${{ needs.build.outputs.version }}/json" >/dev/null && exit 0
+            curl -fsS "https://pypi.org/pypi/adbc-replicate-hardcharger/${{ needs.build.outputs.version }}/json" >/dev/null && exit 0
             sleep 10
           done
-          echo "PyPI doesn't list adbc-replicate ${{ needs.build.outputs.version }}"; exit 1
+          echo "PyPI doesn't list adbc-replicate-hardcharger ${{ needs.build.outputs.version }}"; exit 1
 
   docker:
-    needs: build
+    needs: [build, approve]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -98,15 +119,15 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/gizmodata/adbc-replicate:${{ needs.build.outputs.version }}
-            ghcr.io/gizmodata/adbc-replicate:latest
+            ghcr.io/gizmodata/adbc-replicate-hardcharger:${{ needs.build.outputs.version }}
+            ghcr.io/gizmodata/adbc-replicate-hardcharger:latest
       - name: Confirm the image is published for both architectures
         run: |
-          docker buildx imagetools inspect ghcr.io/gizmodata/adbc-replicate:${{ needs.build.outputs.version }} | tee /tmp/inspect.txt
+          docker buildx imagetools inspect ghcr.io/gizmodata/adbc-replicate-hardcharger:${{ needs.build.outputs.version }} | tee /tmp/inspect.txt
           grep -q 'linux/amd64' /tmp/inspect.txt && grep -q 'linux/arm64' /tmp/inspect.txt
 
   helm:
-    needs: build
+    needs: [build, approve]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -118,8 +139,8 @@ jobs:
           path: dist-chart
       - uses: azure/setup-helm@v5
       - run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
-      - run: helm push dist-chart/adbc-replicate-${{ needs.build.outputs.version }}.tgz oci://ghcr.io/gizmodata/charts
-      - run: helm show chart oci://ghcr.io/gizmodata/charts/adbc-replicate --version ${{ needs.build.outputs.version }}
+      - run: helm push dist-chart/adbc-replicate-hardcharger-${{ needs.build.outputs.version }}.tgz oci://ghcr.io/gizmodata/charts
+      - run: helm show chart oci://ghcr.io/gizmodata/charts/adbc-replicate-hardcharger --version ${{ needs.build.outputs.version }}
 
   github-release:
     needs: [build, pypi, docker, helm]

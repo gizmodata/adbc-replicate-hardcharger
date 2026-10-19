@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from adbc_replicate.views import ViewTranslationError, translate_view
+from adbc_replicate_hardcharger.views import ViewTranslationError, translate_view
 
 
 def tr(definition, dialect="oracle", case="lower", name_map=None, columns=None, schema="HR"):

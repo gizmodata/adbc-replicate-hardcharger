@@ -2,14 +2,14 @@ import json
 
 import pytest
 
-from adbc_replicate.config import ConfigError, json_schema, load_config, parse_config
+from adbc_replicate_hardcharger.config import ConfigError, json_schema, load_config, parse_config
 
 
 def base(**overrides):
     data = {
         "version": 1,
         "source": {"type": "duckdb", "path": "/tmp/x.duckdb"},
-        "target": {"type": "duckdb", "path": "/tmp/y.duckdb"},
+        "target": {"type": "hardcharger", "uri": "hardcharger://h"},
         "objects": [{"db_schemas": ["main"]}],
     }
     data.update(overrides)
@@ -22,7 +22,7 @@ def test_minimal_config_gets_defaults():
     assert config.refresh.mode == "changed"
     assert config.parallelism == 1
     assert config.objects[0].tables == ["*"]
-    assert config.state.db_schema == "_adbc_replicate"
+    assert config.state.db_schema == "_adbc_replicate_hardcharger"
     assert config.ingest.batch_bytes == 12 * 1024 * 1024
 
 
@@ -33,7 +33,7 @@ def test_env_substitution_after_yaml_parsing(monkeypatch, tmp_path):
     path.write_text("""
 version: 1
 source: {type: oracle, uri: "oracle://h:1521/S", username: u, password: "${PW}"}
-target: {type: gizmosql, uri: "gizmosql://h:31337", password: "${MISSING_OK:-fallback}"}
+target: {type: hardcharger, uri: "hardcharger://h", password: "${MISSING_OK:-fallback}"}
 objects: [{db_schemas: [HR]}]
 """)
     config = load_config(path=path)
@@ -48,7 +48,7 @@ def test_config_file_is_read_as_utf8(tmp_path):
 version: 1
 name: "Réplication 🚀 Müller"   # ✅
 source: {type: duckdb, path: /tmp/x.duckdb}
-target: {type: duckdb, path: /tmp/y.duckdb}
+target: {uri: "hardcharger://h"}
 objects: [{db_schemas: [main]}]
 """.encode())
     assert load_config(path=path).name == "Réplication 🚀 Müller"
@@ -87,15 +87,16 @@ def test_expression_mask_needs_sql():
         parse_config(data=base(columns=[{"mask": {"SSN": {"strategy": "expression"}}}]))
 
 
-def test_batch_must_fit_message_size():
-    with pytest.raises(ConfigError, match="max_msg_size"):
-        parse_config(data=base(target={"type": "gizmosql", "uri": "gizmosql://h:1", "max_msg_size": 1000},
-                               ingest={"batch_bytes": 1000}))
+def test_hardcharger_is_the_default_and_only_target():
+    assert parse_config(data=base(target={"uri": "hardcharger://h"})).target.type == "hardcharger"
+    for other in ({"type": "duckdb", "path": "/tmp/y.duckdb"}, {"type": "postgresql", "uri": "postgresql://h/db"}):
+        with pytest.raises(ConfigError, match="type"):
+            parse_config(data=base(target=other))
 
 
 def test_json_schema_is_valid_json_with_discriminators():
     schema = json_schema()
     text = json.dumps(schema)
-    assert schema["title"] == "adbc-replicate config"
-    for name in ("oracle", "postgresql", "snowflake", "gizmosql", "db_schemas", "target_db_schema"):
+    assert schema["title"] == "adbc-replicate-hardcharger config"
+    for name in ("oracle", "postgresql", "snowflake", "hardcharger", "db_schemas", "target_db_schema"):
         assert name in text

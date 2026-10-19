@@ -1,9 +1,9 @@
-"""DuckDB-family targets: GizmoSQL (Arrow Flight SQL over DuckDB), Hardcharger (DuckDB 2.0 over
-Warp SQL) and a local DuckDB file.
+"""The target: a Hardcharger server (DuckDB 2.0 over the Warp SQL protocol).
 
-All speak DuckDB SQL, so catalog introspection, view DDL and sync-state tables are shared;
-only connecting differs. Loads use ADBC bulk ingest (`adbc_ingest`, mode "replace") inside a
-transaction, so readers keep seeing the previous copy of a table until the new one commits.
+It speaks DuckDB SQL, so catalog introspection, view DDL and sync-state tables are written in it. Loads use
+ADBC bulk ingest (`adbc_ingest`, mode "replace", sent as `ingest_parts` parts at once) inside a transaction,
+so readers keep seeing the previous copy of a table until the new one commits; a rollback undoes a load,
+parts and all (checked by the integration tests).
 """
 
 from __future__ import annotations
@@ -13,8 +13,6 @@ from contextlib import nullcontext
 
 import pyarrow as pa
 
-from ..config import DuckDBTarget as DuckDBConfig
-from ..config import GizmoSQLTarget as GizmoSQLConfig
 from ..config import HardchargerTarget as HardchargerConfig
 from ..sources.base import quote_ident
 
@@ -27,24 +25,16 @@ _NETWORK_ERRORS = ("read: operation timed out", "i/o timeout", "connection reset
 
 
 def is_transient(error: BaseException | str) -> bool:
-    """A connection-level failure worth retrying: gRPC 'unavailable' (a proxy reload sends
-    GOAWAY, the server restarts, the network blips) or a network read failing mid-stream, as
-    opposed to an error in the request."""
+    """A connection-level failure worth retrying: the server refusing new statements while it shuts
+    down (server_draining), or a network read failing mid-stream, as opposed to an error in the request."""
     text = str(error)
-    return ("(Unavailable;" in text or "connection is draining" in text or "GOAWAY" in text
-            or "(server_draining," in text or any(marker in text for marker in _NETWORK_ERRORS))
-
-
-def _target_unavailable(error: BaseException) -> bool:
-    text = str(error)
-    return "(Unavailable;" in text or "connection is draining" in text or "GOAWAY" in text
+    return "(server_draining," in text or any(marker in text for marker in _NETWORK_ERRORS)
 
 
 def _failed_before_running(error: BaseException) -> bool:
-    """True when a statement failed while being prepared, so it never ran and can be resent. A Warp SQL
-    server that is shutting down refuses new statements with 503 server_draining (spec §11.1)."""
-    text = str(error)
-    return (_target_unavailable(error=error) and "Prepare)" in text) or "(server_draining," in text
+    """True when a statement was refused before it ran, so it can be resent: a Warp SQL server that is
+    shutting down refuses new statements with 503 server_draining (spec §11.1)."""
+    return "(server_draining," in str(error)
 
 
 STATEMENT_RETRIES = 3
@@ -54,17 +44,20 @@ class DuplicateKeyError(Exception):
     """An incremental merge key isn't unique in the rows being merged."""
 
 
-class DuckDBFamilyTarget:
+class HardchargerTarget:
     dialect = "duckdb"
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: HardchargerConfig) -> None:
         self.config = config
         self.catalog: str | None = config.catalog
 
     # ---- connections ----------------------------------------------------------------------
 
     def _open(self):
-        raise NotImplementedError
+        from ..sources.hardcharger import hardcharger_connect
+
+        return hardcharger_connect(config=self.config, autocommit=False,
+                                   db_kwargs={"adbc.hardcharger.ingest.parts": str(self.config.ingest_parts)})
 
     def connect(self):
         conn = self._open()
@@ -102,11 +95,11 @@ class DuckDBFamilyTarget:
 
     @staticmethod
     def execute(conn, sql: str, parameters: list | None = None) -> None:
-        DuckDBFamilyTarget._run(conn=conn, sql=sql, parameters=parameters, fetch=False)
+        HardchargerTarget._run(conn=conn, sql=sql, parameters=parameters, fetch=False)
 
     @staticmethod
     def query(conn, sql: str, parameters: list | None = None) -> list[tuple]:
-        return DuckDBFamilyTarget._run(conn=conn, sql=sql, parameters=parameters, fetch=True)
+        return HardchargerTarget._run(conn=conn, sql=sql, parameters=parameters, fetch=True)
 
     def qualified(self, db_schema: str, name: str) -> str:
         parts = [db_schema, name]
@@ -117,9 +110,8 @@ class DuckDBFamilyTarget:
     # ---- catalog --------------------------------------------------------------------------
 
     def existing_objects(self, conn) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
-        """All (db_schema, name) tables and views in the target catalog — one snapshot, rather
-        than a query per object (GizmoSQL v1.39 rejected rapid re-executions of one prepared
-        statement with 'Prepared statement is busy')."""
+        """All (db_schema, name) tables and views in the target catalog, in one query each rather than a
+        query per object."""
         tables = {(s, n) for s, n in self.query(
             conn=conn, sql="SELECT schema_name, table_name FROM duckdb_tables() WHERE database_name = ?",
             parameters=[self.catalog])}
@@ -202,46 +194,5 @@ class DuckDBFamilyTarget:
             return str(e)
 
 
-class GizmoSQLTarget(DuckDBFamilyTarget):
-    config: GizmoSQLConfig
-
-    def _open(self):
-        import adbc_driver_gizmosql.dbapi as gizmosql
-
-        db_kwargs = {"adbc.flight.sql.client_option.with_max_msg_size": str(self.config.max_msg_size),
-                     **self.config.options}
-        return gizmosql.connect(uri=self.config.uri, username=self.config.username, password=self.config.password,
-                                tls_skip_verify=self.config.tls_skip_verify, db_kwargs=db_kwargs, autocommit=False)
-
-
-class HardchargerTarget(DuckDBFamilyTarget):
-    """Bulk loads go in `ingest_parts` parts at once (Warp SQL partitioned ingest), committed in the
-    connection's transaction like any other statement: a rollback undoes them (checked by the
-    integration tests)."""
-
-    config: HardchargerConfig
-
-    def _open(self):
-        from ..sources.hardcharger import hardcharger_connect
-
-        return hardcharger_connect(config=self.config, autocommit=False,
-                                   db_kwargs={"adbc.hardcharger.ingest.parts": str(self.config.ingest_parts)})
-
-
-class DuckDBTarget(DuckDBFamilyTarget):
-    config: DuckDBConfig
-
-    def _open(self):
-        from ..sources.duckdb import duckdb_connect
-
-        return duckdb_connect(path=self.config.path)
-
-
-def make_target(config) -> DuckDBFamilyTarget:
-    if config.type == "gizmosql":
-        return GizmoSQLTarget(config=config)
-    if config.type == "duckdb":
-        return DuckDBTarget(config=config)
-    if config.type == "hardcharger":
-        return HardchargerTarget(config=config)
-    raise ValueError(f"unknown target type {config.type!r}")
+def make_target(config: HardchargerConfig) -> HardchargerTarget:
+    return HardchargerTarget(config=config)

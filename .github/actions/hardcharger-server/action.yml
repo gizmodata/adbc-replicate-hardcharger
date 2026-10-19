@@ -1,0 +1,28 @@
+name: Hardcharger server
+description: >-
+  Pull a Hardcharger image with the workflow's GITHUB_TOKEN and start the test server on
+  127.0.0.1:31387 (plain HTTP, admin hardcharger/hardcharger). Fails, with the fix, when the pull is denied.
+inputs:
+  image:
+    description: The Hardcharger image
+    required: true
+  token:
+    description: The workflow's GITHUB_TOKEN (needs packages read on the hardcharger package)
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        TOKEN: ${{ inputs.token }}
+      run: |
+        printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin > /dev/null
+        if ! docker pull -q "$IMAGE"; then
+          echo "::error::can't pull $IMAGE with this workflow's GITHUB_TOKEN: grant $GITHUB_REPOSITORY read access to the hardcharger package (package settings, Manage Actions access)"
+          exit 1
+        fi
+        docker run -d --name hardcharger -p 127.0.0.1:31387:31337 \
+          -e HARDCHARGER_ADMIN_USERNAME=hardcharger -e HARDCHARGER_ADMIN_PASSWORD=hardcharger \
+          -e HARDCHARGER_DATABASE=/tmp/target.duckdb "$IMAGE"
+        docker run --rm "$IMAGE" --version

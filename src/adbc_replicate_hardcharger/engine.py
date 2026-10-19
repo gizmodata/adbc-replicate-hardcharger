@@ -25,7 +25,7 @@ from .planner import PlanError, build_plan
 from .sources import make_source
 from .state import StateStore, column_signature
 from .targets import make_target
-from .targets.duckdb import DuplicateKeyError, is_transient
+from .targets.hardcharger import DuplicateKeyError, is_transient
 from .views import ViewTranslationError, create_view_sql, load_override, translate_view
 
 EXIT_OK = 0
@@ -650,7 +650,7 @@ class Replicator:
             store.ensure()
             store.start_run(run_id=run_id, replication=self.config.name, tool_version=__version__,
                             refresh_mode=refresh_mode, row_limit=self.options.row_limit)
-            self.emit("run_started", f"🚀 adbc-replicate {__version__}: {self.config.source.type} → "
+            self.emit("run_started", f"🚀 adbc-replicate-hardcharger {__version__}: {self.config.source.type} → "
                       f"{self.config.target.type} (catalog {self.target.catalog}), run {run_id}"
                       + (f", {refresh_mode} refresh" if refresh_mode == "full" else "")
                       + (f", row limit {self.options.row_limit:,}" if self.options.row_limit else ""),

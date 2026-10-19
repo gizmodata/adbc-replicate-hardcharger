@@ -1,4 +1,4 @@
-"""Integration fixtures: real GizmoSQL and Hardcharger targets plus Oracle and PostgreSQL sources.
+"""Integration fixtures: a real Hardcharger target (also a source) plus Oracle and PostgreSQL sources.
 
 These tests gate releases, so an unreachable server is a FAILURE, never a skip: a dead
 service container must not turn into a green job with zero coverage.
@@ -13,24 +13,21 @@ import uuid
 
 import pytest
 
-from adbc_replicate.config import parse_config
-from adbc_replicate.engine import Replicator, RunOptions
-from adbc_replicate.events import Reporter
+from adbc_replicate_hardcharger.config import parse_config
+from adbc_replicate_hardcharger.engine import Replicator, RunOptions
+from adbc_replicate_hardcharger.events import Reporter
 
-GIZMOSQL_URI = os.getenv("ADBC_REPLICATE_TEST_GIZMOSQL_URI", "gizmosql://127.0.0.1:31377?transport=tcp")
-GIZMOSQL_USERNAME = os.getenv("ADBC_REPLICATE_TEST_GIZMOSQL_USERNAME", "gizmosql")
-GIZMOSQL_PASSWORD = os.getenv("ADBC_REPLICATE_TEST_GIZMOSQL_PASSWORD", "gizmosql")
-ORACLE_URI = os.getenv("ADBC_REPLICATE_TEST_ORACLE_URI", "oracle://127.0.0.1:15211/FREEPDB1")
-ORACLE_USERNAME = os.getenv("ADBC_REPLICATE_TEST_ORACLE_USERNAME", "replicate")
-ORACLE_PASSWORD = os.getenv("ADBC_REPLICATE_TEST_ORACLE_PASSWORD", "replicate")
-ORACLE_SYSTEM_PASSWORD = os.getenv("ADBC_REPLICATE_TEST_ORACLE_SYSTEM_PASSWORD", "oracle")
-POSTGRES_URI = os.getenv("ADBC_REPLICATE_TEST_POSTGRES_URI", "postgresql://127.0.0.1:15432/source")
-POSTGRES_USERNAME = os.getenv("ADBC_REPLICATE_TEST_POSTGRES_USERNAME", "postgres")
-POSTGRES_PASSWORD = os.getenv("ADBC_REPLICATE_TEST_POSTGRES_PASSWORD", "postgres")
-HARDCHARGER_URI = os.getenv("ADBC_REPLICATE_TEST_HARDCHARGER_URI", "hardcharger://127.0.0.1:31387?tls=false")
-HARDCHARGER_USERNAME = os.getenv("ADBC_REPLICATE_TEST_HARDCHARGER_USERNAME", "hardcharger")
-HARDCHARGER_PASSWORD = os.getenv("ADBC_REPLICATE_TEST_HARDCHARGER_PASSWORD", "hardcharger")
-WAIT_SECONDS = int(os.getenv("ADBC_REPLICATE_TEST_WAIT_SECONDS", "180"))
+ORACLE_URI = os.getenv("ADBC_REPLICATE_HARDCHARGER_TEST_ORACLE_URI", "oracle://127.0.0.1:15211/FREEPDB1")
+ORACLE_USERNAME = os.getenv("ADBC_REPLICATE_HARDCHARGER_TEST_ORACLE_USERNAME", "replicate")
+ORACLE_PASSWORD = os.getenv("ADBC_REPLICATE_HARDCHARGER_TEST_ORACLE_PASSWORD", "replicate")
+ORACLE_SYSTEM_PASSWORD = os.getenv("ADBC_REPLICATE_HARDCHARGER_TEST_ORACLE_SYSTEM_PASSWORD", "oracle")
+POSTGRES_URI = os.getenv("ADBC_REPLICATE_HARDCHARGER_TEST_POSTGRES_URI", "postgresql://127.0.0.1:15432/source")
+POSTGRES_USERNAME = os.getenv("ADBC_REPLICATE_HARDCHARGER_TEST_POSTGRES_USERNAME", "postgres")
+POSTGRES_PASSWORD = os.getenv("ADBC_REPLICATE_HARDCHARGER_TEST_POSTGRES_PASSWORD", "postgres")
+HARDCHARGER_URI = os.getenv("ADBC_REPLICATE_HARDCHARGER_TEST_URI", "hardcharger://127.0.0.1:31387?tls=false")
+HARDCHARGER_USERNAME = os.getenv("ADBC_REPLICATE_HARDCHARGER_TEST_USERNAME", "hardcharger")
+HARDCHARGER_PASSWORD = os.getenv("ADBC_REPLICATE_HARDCHARGER_TEST_PASSWORD", "hardcharger")
+WAIT_SECONDS = int(os.getenv("ADBC_REPLICATE_HARDCHARGER_TEST_WAIT_SECONDS", "180"))
 
 
 
@@ -45,11 +42,6 @@ def _wait(name: str, connect):
             time.sleep(3)
     pytest.fail(f"{name} is unreachable after {WAIT_SECONDS}s (start it with `docker compose up -d --wait`): {last}",
                 pytrace=False)
-
-
-def gizmosql_connect():
-    import adbc_driver_gizmosql.dbapi as gizmosql
-    return gizmosql.connect(uri=GIZMOSQL_URI, username=GIZMOSQL_USERNAME, password=GIZMOSQL_PASSWORD)
 
 
 def hardcharger_connect(autocommit=True):
@@ -67,7 +59,7 @@ def oracle_connect(username=ORACLE_USERNAME, password=ORACLE_PASSWORD, autocommi
 def postgres_connect(autocommit=True):
     import adbc_driver_postgresql.dbapi as postgresql
 
-    from adbc_replicate.sources.postgresql import _with_credentials
+    from adbc_replicate_hardcharger.sources.postgresql import _with_credentials
     return postgresql.connect(uri=_with_credentials(uri=POSTGRES_URI, username=POSTGRES_USERNAME,
                                                     password=POSTGRES_PASSWORD), autocommit=autocommit)
 
@@ -87,13 +79,6 @@ def query(conn, sql):
 def _drop_oracle(kind: str, name: str) -> str:
     return f"BEGIN EXECUTE IMMEDIATE 'DROP {kind} {name}{' CASCADE CONSTRAINTS' if kind == 'TABLE' else ''}'; " \
            "EXCEPTION WHEN OTHERS THEN NULL; END;"
-
-
-@pytest.fixture(scope="session")
-def gizmosql():
-    conn = _wait(name="GizmoSQL", connect=lambda: _probe(connect=gizmosql_connect, sql="SELECT 1"))
-    yield conn
-    conn.close()
 
 
 @pytest.fixture(scope="session")
@@ -210,14 +195,23 @@ def postgres():
     conn.close()
 
 
+def attached_catalog(hardcharger, name: str):
+    """Attach a fresh database file on the server as catalog `name`; returns a connection using it."""
+    execute(conn=hardcharger, statements=[f"ATTACH '/tmp/{name}-{uuid.uuid4().hex}.duckdb' AS {name}"])
+    conn = hardcharger_connect()
+    execute(conn=conn, statements=[f"USE {name}"])
+    return conn
+
+
+def detach(hardcharger, conn, name: str) -> None:
+    conn.close()
+    execute(conn=hardcharger, statements=[f"DETACH {name}"])
+
+
 @pytest.fixture
 def prefix():
-    """A unique target db_schema prefix per test, so tests share one GizmoSQL database safely."""
+    """A unique target db_schema prefix per test, so tests share one Hardcharger database safely."""
     return "t" + uuid.uuid4().hex[:8]
-
-
-def gizmosql_target(prefix: str) -> dict:
-    return {"type": "gizmosql", "uri": GIZMOSQL_URI, "username": GIZMOSQL_USERNAME, "password": GIZMOSQL_PASSWORD}
 
 
 def hardcharger_target(**extra) -> dict:
@@ -240,7 +234,7 @@ def postgres_source(**extra) -> dict:
 
 
 def make_config(prefix: str, source: dict, objects: list, target: dict | None = None, **extra):
-    data = {"version": 1, "name": f"it-{prefix}", "source": source, "target": target or gizmosql_target(prefix=prefix),
+    data = {"version": 1, "name": f"it-{prefix}", "source": source, "target": target or hardcharger_target(),
             "objects": objects, "state": {"db_schema": f"{prefix}_state"}}
     data.update(extra)
     return parse_config(data=data)

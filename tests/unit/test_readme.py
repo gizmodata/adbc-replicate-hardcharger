@@ -6,23 +6,23 @@ from pathlib import Path
 import pytest
 import yaml
 
-from adbc_replicate.config import parse_config
+from adbc_replicate_hardcharger.config import parse_config
 
 README = Path(__file__).resolve().parents[2] / "README.md"
 BLOCKS = re.findall(r"```yaml\n(.*?)```", README.read_text(encoding="utf-8"), flags=re.DOTALL)
 BASE = {
     "version": 1,
     "source": {"type": "oracle", "uri": "oracle://h:1521/S"},
-    "target": {"type": "gizmosql", "uri": "gizmosql://h:31337"},
+    "target": {"type": "hardcharger", "uri": "hardcharger://h"},
     "objects": [{"db_schemas": ["HR"]}],
 }
 
 
 @pytest.fixture(autouse=True)
 def env(monkeypatch):
-    for name in ("PGPASSWORD", "PGUSER", "GIZMOSQL_PASSWORD", "GIZMOSQL_USERNAME", "ORACLE_USERNAME",
+    for name in ("PGPASSWORD", "PGUSER", "ORACLE_USERNAME",
                  "ORACLE_PASSWORD", "SNOWFLAKE_ACCOUNT", "SNOWFLAKE_PRIVATE_KEY", "MASK_SALT", "SLACK_WEBHOOK_URL",
-                 "OPS_WEBHOOK_URL", "SNOWFLAKE_PRIVATE_KEY_PASSPHRASE", "HARDCHARGER_USERNAME",
+                 "OPS_WEBHOOK_URL", "SNOWFLAKE_PRIVATE_KEY_PASSPHRASE", "HARDCHARGER_USERNAME", "STAGING_USERNAME", "STAGING_PASSWORD",
                  "HARDCHARGER_PASSWORD"):
         monkeypatch.setenv(name, "x")
 

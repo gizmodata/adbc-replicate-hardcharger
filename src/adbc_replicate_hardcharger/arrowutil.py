@@ -43,8 +43,8 @@ def transform(reader: pa.RecordBatchReader, names: list[str],
     """Rename every column to `names` (zero-copy), strip extension types, and apply the
     per-column `casts` ({column index: type}; a strict Arrow cast, so precision loss raises).
 
-    An empty source yields a single zero-row batch, because a Flight DoPut needs at least one
-    message to carry the schema.
+    An empty source yields a single zero-row batch, so the ingest always carries the schema and creates
+    the (empty) table.
     """
     casts = casts or {}
     fields = []

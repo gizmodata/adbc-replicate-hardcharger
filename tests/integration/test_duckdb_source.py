@@ -1,24 +1,29 @@
-"""End-to-end engine tests with a DuckDB source and a DuckDB target: no servers needed, so they
-run everywhere (every Python version in CI). The integration suite covers Oracle, PostgreSQL
-and a real GizmoSQL server."""
+"""End-to-end engine tests from a DuckDB source file into a real Hardcharger server. Each test loads into a
+catalog of its own (a database file attached on the server for the test), so they share one server
+safely."""
 
 import hashlib
 import io
 import json
+import uuid
 
 import duckdb
 import pytest
 from click.testing import CliRunner
+from conftest import HARDCHARGER_PASSWORD, HARDCHARGER_URI, HARDCHARGER_USERNAME, attached_catalog, detach, query
 
-from adbc_replicate.cli import main
-from adbc_replicate.config import parse_config
-from adbc_replicate.engine import EXIT_FAILED, EXIT_OK, EXIT_VIEW_ERRORS, Replicator, RunOptions
-from adbc_replicate.events import Reporter
-from adbc_replicate.planner import PlanError
+from adbc_replicate_hardcharger.cli import main
+from adbc_replicate_hardcharger.config import parse_config
+from adbc_replicate_hardcharger.engine import EXIT_FAILED, EXIT_OK, EXIT_VIEW_ERRORS, Replicator, RunOptions
+from adbc_replicate_hardcharger.events import Reporter
+from adbc_replicate_hardcharger.planner import PlanError
+
+pytestmark = pytest.mark.integration
+
 
 
 @pytest.fixture
-def paths(tmp_path):
+def paths(tmp_path, hardcharger):
     src = tmp_path / "source.duckdb"
     con = duckdb.connect(database=str(src))
     con.execute(query="""
@@ -38,7 +43,10 @@ def paths(tmp_path):
         CREATE VIEW hr.v_orders AS SELECT * FROM staging.raw_orders;
     """)
     con.close()
-    return {"source": str(src), "target": str(tmp_path / "target.duckdb")}
+    catalog = "c" + uuid.uuid4().hex[:12]
+    target = attached_catalog(hardcharger=hardcharger, name=catalog)
+    yield {"source": str(src), "catalog": catalog, "target": target}
+    detach(hardcharger=hardcharger, conn=target, name=catalog)
 
 
 def make_config(paths, **overrides):
@@ -46,7 +54,8 @@ def make_config(paths, **overrides):
         "version": 1,
         "name": "unit",
         "source": {"type": "duckdb", "path": paths["source"]},
-        "target": {"type": "duckdb", "path": paths["target"], "checkpoint": False},
+        "target": {"uri": HARDCHARGER_URI, "username": HARDCHARGER_USERNAME, "password": HARDCHARGER_PASSWORD,
+                   "catalog": paths["catalog"], "checkpoint": False},
         "objects": [{"db_schemas": ["hr"], "exclude_tables": ["*_bak"]}],
         "columns": [{"tables": ["hr.employees"], "exclude": ["notes"],
                      "mask": {"ssn": {"strategy": "hash", "salt": "pepper"}},
@@ -64,11 +73,8 @@ def run(config, **options):
 
 
 def target_query(paths, sql):
-    con = duckdb.connect(database=paths["target"], read_only=True)
-    try:
-        return con.execute(query=sql).fetchall()
-    finally:
-        con.close()
+    """Run a query in the test's target catalog."""
+    return query(conn=paths["target"], sql=sql)
 
 
 def source_exec(paths, sql):
@@ -90,7 +96,7 @@ def test_full_run_copies_masks_and_creates_views(paths):
     assert ssn == hashlib.sha256(b"pepper123-45-0007").hexdigest()                  # masked in the source
     assert target_query(paths=paths, sql="SELECT count(*) FROM hr.v_emp")[0][0] == 500
     assert sorted(target_query(paths=paths, sql="SELECT * FROM hr.v_emp_count")) == [("Engineering", 250), ("Sales", 250)]
-    assert target_query(paths=paths, sql="SELECT count(*) FROM duckdb_tables() WHERE table_name = 'orders_bak'")[0][0] == 0
+    assert target_query(paths=paths, sql="SELECT count(*) FROM duckdb_tables() WHERE database_name = current_database() AND table_name = 'orders_bak'")[0][0] == 0
     assert "📦" in out and "✅" in out
 
 
@@ -159,7 +165,7 @@ def test_view_failure_can_fall_back_to_materialization(paths):
     summary, out = run(config=config)
     assert summary.exit_code == EXIT_OK, out
     assert target_query(paths=paths, sql="SELECT count(*) FROM hr.v_orders")[0][0] == 2
-    assert target_query(paths=paths, sql="SELECT count(*) FROM duckdb_tables() WHERE table_name = 'v_orders'")[0][0] == 1
+    assert target_query(paths=paths, sql="SELECT count(*) FROM duckdb_tables() WHERE database_name = current_database() AND table_name = 'v_orders'")[0][0] == 1
 
 
 def test_view_override_file(paths, tmp_path):
@@ -187,7 +193,7 @@ def test_table_failure_aborts_and_skips_views(paths):
     assert summary.exit_code == EXIT_FAILED and summary.status == "failed"
     assert "hr.employees" in summary.table_failures
     assert "Views skipped" in out
-    log = target_query(paths=paths, sql="SELECT status, tables_failed FROM _adbc_replicate.run_log")
+    log = target_query(paths=paths, sql="SELECT status, tables_failed FROM _adbc_replicate_hardcharger.run_log")
     assert log == [("failed", 1)]
 
 
@@ -224,7 +230,7 @@ def test_cli_validate_plan_and_run(paths, tmp_path):
 
 
 def test_cli_init_writes_a_valid_example(tmp_path, monkeypatch):
-    for var in ("ORACLE_USERNAME", "ORACLE_PASSWORD", "GIZMOSQL_USERNAME", "GIZMOSQL_PASSWORD"):
+    for var in ("ORACLE_USERNAME", "ORACLE_PASSWORD", "HARDCHARGER_USERNAME", "HARDCHARGER_PASSWORD"):
         monkeypatch.setenv(var, "x")
     path = tmp_path / "replicate.yaml"
     runner = CliRunner()
@@ -234,15 +240,23 @@ def test_cli_init_writes_a_valid_example(tmp_path, monkeypatch):
     assert runner.invoke(main, ["validate", "-c", str(path)]).exit_code == 0     # short alias still works
 
 
-def test_catalog_named_like_a_db_schema(paths, tmp_path):
-    # Target file hr.duckdb -> catalog "hr", which is also a target db_schema: "hr"."dept" would be
-    # ambiguous to DuckDB, so DDL and translated views must qualify with the catalog.
-    paths = {**paths, "target": str(tmp_path / "hr.duckdb")}
-    summary, out = run(config=make_config(paths=paths), only=["hr.dept", "hr.employees", "hr.v_emp*"])
-    assert summary.exit_code == EXIT_OK, out
-    assert target_query(paths=paths, sql="SELECT count(*) FROM hr.hr.v_emp")[0][0] == 500
-    summary, out = run(config=make_config(paths=paths), only=["hr.dept"], full_refresh=True)
-    assert summary.exit_code == EXIT_OK, out
+def test_catalog_named_like_a_db_schema(paths, hardcharger):
+    # Target catalog "hr", which is also a target db_schema: "hr"."dept" would be ambiguous, so DDL is
+    # qualified with the catalog and tables copy. Views can't be created there: DuckDB 2.0 refuses a view in
+    # catalog hr that reads db_schema hr even fully qualified ("Ambiguous reference to catalog or schema"),
+    # while the same view in another catalog works; the failures name that reason.
+    target = attached_catalog(hardcharger=hardcharger, name="hr")
+    try:
+        paths = {**paths, "catalog": "hr", "target": target}
+        summary, out = run(config=make_config(paths=paths), only=["hr.dept", "hr.employees", "hr.v_emp*"])
+        assert summary.exit_code == EXIT_VIEW_ERRORS and summary.stats["tables_copied"] == 2, out
+        assert target_query(paths=paths, sql="SELECT count(*) FROM hr.hr.employees")[0][0] == 500
+        assert set(summary.view_failures) == {"hr.v_emp", "hr.v_emp_count"}, out
+        assert all("Ambiguous reference to catalog or schema" in e for e in summary.view_failures.values()), out
+        summary, out = run(config=make_config(paths=paths), only=["hr.dept"], full_refresh=True)
+        assert summary.exit_code == EXIT_OK, out
+    finally:
+        detach(hardcharger=hardcharger, conn=target, name="hr")
 
 
 def test_reporter_survives_a_closed_pipe():
@@ -255,12 +269,13 @@ def test_reporter_survives_a_closed_pipe():
     reporter.emit(event="y", text="still fine")
 
 
-DRAINING = "IO: [GizmoSQL] [FlightSQL] the connection is draining (Unavailable; ExecuteIngest). Vendor code: 14"
+DRAINING = ("UNAVAILABLE: [warpsql] bulk ingest into employees: Hardcharger is shutting down "
+            "(server_draining, HTTP 503, request r_1)")
 
 
 def test_transient_ingest_error_is_retried(paths, monkeypatch):
-    from adbc_replicate.targets.duckdb import DuckDBFamilyTarget
-    real_ingest = DuckDBFamilyTarget.ingest
+    from adbc_replicate_hardcharger.targets.hardcharger import HardchargerTarget
+    real_ingest = HardchargerTarget.ingest
     failures = {"hr.employees": 1}
 
     def flaky_ingest(self, conn, db_schema, table, reader, track=None):
@@ -270,7 +285,7 @@ def test_transient_ingest_error_is_retried(paths, monkeypatch):
             raise RuntimeError(DRAINING)
         return real_ingest(self, conn=conn, db_schema=db_schema, table=table, reader=reader, track=track)
 
-    monkeypatch.setattr(DuckDBFamilyTarget, "ingest", flaky_ingest)
+    monkeypatch.setattr(HardchargerTarget, "ingest", flaky_ingest)
     summary, out = run(config=make_config(paths=paths, ingest={"retry_wait_seconds": 0}), skip_views=True)
     assert summary.exit_code == EXIT_OK, out
     assert "🔁 hr.employees" in out and "attempt 2 of 3" in out
@@ -278,21 +293,21 @@ def test_transient_ingest_error_is_retried(paths, monkeypatch):
 
 
 def test_non_transient_ingest_error_is_not_retried(paths, monkeypatch):
-    from adbc_replicate.targets.duckdb import DuckDBFamilyTarget
+    from adbc_replicate_hardcharger.targets.hardcharger import HardchargerTarget
     calls = []
 
     def broken_ingest(self, conn, db_schema, table, reader, track=None):
         calls.append(table)
-        raise RuntimeError("413 Request Entity Too Large (Unknown; ExecuteIngest)")
+        raise RuntimeError("PAYLOAD_TOO_LARGE: [warpsql] bulk ingest into dept: Request Entity Too Large (HTTP 413)")
 
-    monkeypatch.setattr(DuckDBFamilyTarget, "ingest", broken_ingest)
+    monkeypatch.setattr(HardchargerTarget, "ingest", broken_ingest)
     summary, out = run(config=make_config(paths=paths, ingest={"retry_wait_seconds": 0}), skip_views=True)
     assert summary.exit_code == EXIT_FAILED and "🔁" not in out
     assert len(calls) == 1                         # aborted after the first table, never retried
 
 
 def test_statement_retried_only_when_it_never_ran(monkeypatch):
-    from adbc_replicate.targets import duckdb as target_mod
+    from adbc_replicate_hardcharger.targets import hardcharger as target_mod
     monkeypatch.setattr(target_mod.time, "sleep", lambda s: None)
 
     class FakeCursor:
@@ -314,11 +329,11 @@ def test_statement_retried_only_when_it_never_ran(monkeypatch):
         def cursor(self):
             return FakeCursor(errors=self.errors)
 
-    prepare = "the connection is draining (Unavailable; Prepare). Vendor code: 14"
-    assert target_mod.DuckDBFamilyTarget.query(conn=FakeConn(errors=[prepare, prepare]), sql="SELECT 1") == [(1,)]
-    executed = "the connection is draining (Unavailable; ExecuteUpdate). Vendor code: 14"
+    refused = "UNAVAILABLE: [warpsql] ExecuteQuery: shutting down (server_draining, HTTP 503, request r_1)"
+    assert target_mod.HardchargerTarget.query(conn=FakeConn(errors=[refused, refused]), sql="SELECT 1") == [(1,)]
+    executed = "IO: [warpsql] ExecuteUpdate: read tcp 127.0.0.1:1->127.0.0.1:2: connection reset by peer"
     with pytest.raises(RuntimeError, match="ExecuteUpdate"):     # may have run: never resent
-        target_mod.DuckDBFamilyTarget.execute(conn=FakeConn(errors=[executed]), sql="INSERT ...")
+        target_mod.HardchargerTarget.execute(conn=FakeConn(errors=[executed]), sql="INSERT ...")
 
 
 def test_rename_columns(paths):
@@ -372,12 +387,12 @@ def webhook():
 
 
 def test_failure_notifies_slack_with_the_failed_tables(paths, webhook, monkeypatch):
-    from adbc_replicate.targets.duckdb import DuckDBFamilyTarget
+    from adbc_replicate_hardcharger.targets.hardcharger import HardchargerTarget
 
     def broken_ingest(self, conn, db_schema, table, reader, track=None):
         raise RuntimeError("disk full")
 
-    monkeypatch.setattr(DuckDBFamilyTarget, "ingest", broken_ingest)
+    monkeypatch.setattr(HardchargerTarget, "ingest", broken_ingest)
     config = make_config(paths=paths, name="nightly-hr", notifications=[{"url": webhook.url}])
     summary, out = run(config=config, skip_views=True)
     assert summary.exit_code == EXIT_FAILED
@@ -414,15 +429,15 @@ def test_view_errors_and_plan_errors_notify(paths, webhook):
 
 
 def test_connection_failure_still_notifies(paths, webhook, tmp_path):
-    config = make_config(paths={**paths, "target": str(tmp_path / "missing-dir" / "t.duckdb")},
-                         notifications=[{"url": webhook.url, "format": "json"}])
+    config = make_config(paths=paths, notifications=[{"url": webhook.url, "format": "json"}])
+    config.target.uri = "hardcharger://127.0.0.1:1?tls=false"        # nothing listens there
     with pytest.raises(Exception):  # noqa: B017 - any connection error
         run(config=config)
     assert webhook.bodies[-1]["outcome"] == "failure" and webhook.bodies[-1]["error"]
 
 
 def test_a_broken_webhook_never_fails_the_run(paths, webhook, monkeypatch):
-    import adbc_replicate.notify as notify
+    import adbc_replicate_hardcharger.notify as notify
     monkeypatch.setattr(notify.time, "sleep", lambda s: None)
     webhook.status = 500
     summary, out = run(config=make_config(paths=paths, notifications=[{"url": webhook.url, "when": ["success"]}]),
@@ -448,8 +463,8 @@ def test_cancel_interrupts_every_in_flight_load(paths, monkeypatch):
     the main thread's, and stop the run without views: killed loads left server sessions holding locks."""
     import threading
 
-    from adbc_replicate.engine import EXIT_INTERRUPTED
-    from adbc_replicate.targets.duckdb import DuckDBFamilyTarget
+    from adbc_replicate_hardcharger.engine import EXIT_INTERRUPTED
+    from adbc_replicate_hardcharger.targets.hardcharger import HardchargerTarget
 
     started, cancelled = threading.Semaphore(0), []
 
@@ -469,7 +484,7 @@ def test_cancel_interrupts_every_in_flight_load(paths, monkeypatch):
                 raise AssertionError("never cancelled")
             raise RuntimeError("CANCELLED: context canceled")
 
-    monkeypatch.setattr(DuckDBFamilyTarget, "ingest", slow_ingest)
+    monkeypatch.setattr(HardchargerTarget, "ingest", slow_ingest)
     out = io.StringIO()
     replicator = Replicator(config=make_config(paths=paths, parallelism=2), reporter=Reporter(fmt="text", stream=out))
     result = {}
@@ -482,13 +497,13 @@ def test_cancel_interrupts_every_in_flight_load(paths, monkeypatch):
     assert len(cancelled) == 2, out.getvalue()
     assert summary.status == "interrupted" and summary.exit_code == EXIT_INTERRUPTED
     assert "Views skipped: the run was interrupted (SIGTERM)" in out.getvalue()
-    assert target_query(paths=paths, sql="SELECT status FROM _adbc_replicate.run_log")[0][0] == "interrupted"
+    assert target_query(paths=paths, sql="SELECT status FROM _adbc_replicate_hardcharger.run_log")[0][0] == "interrupted"
 
 
 def test_incremental_key_decision():
-    from adbc_replicate.config import MaskSpec
-    from adbc_replicate.models import Column, SelectedColumn, SourceObject, TableTask
-    from adbc_replicate.planner import _incremental_key
+    from adbc_replicate_hardcharger.config import MaskSpec
+    from adbc_replicate_hardcharger.models import Column, SelectedColumn, SourceObject, TableTask
+    from adbc_replicate_hardcharger.planner import _incremental_key
 
     def task(primary_key, masks=None, drop=()):
         cols = [Column(name=n, data_type="NUMBER") for n in ("ID", "LINE", "AMOUNT")]
@@ -519,21 +534,20 @@ def test_views_that_no_longer_bind_are_dropped_not_left_broken(paths):
     recreate, while its previous version stayed in the target and the next run called it "unchanged"
     (same definition hash), so a broken view lingered silently."""
     summary, out = run(config=make_config(paths=paths))
-    assert target_query(paths=paths, sql="SELECT count(*) FROM duckdb_views() WHERE view_name = 'v_emp'")[0][0] == 1
+    assert target_query(paths=paths, sql="SELECT count(*) FROM duckdb_views() WHERE database_name = current_database() AND view_name = 'v_emp'")[0][0] == 1
 
     without_name = make_config(paths=paths, columns=[{"tables": ["hr.employees"], "exclude": ["notes", "Name"],
                                                      "mask": {"ssn": {"strategy": "hash", "salt": "pepper"}}}])
     for _ in range(2):              # the second run used to call the stale view "unchanged"
         summary, out = run(config=without_name)
         assert "hr.v_emp" in summary.view_failures, out
-        assert target_query(paths=paths, sql="SELECT count(*) FROM duckdb_views() WHERE view_name IN "
+        assert target_query(paths=paths, sql="SELECT count(*) FROM duckdb_views() WHERE database_name = current_database() AND view_name IN "
                                              "('v_emp', 'v_emp_count')")[0][0] == 0, out
     # every view left in the target works
-    con = duckdb.connect(database=paths["target"], read_only=True)
-    for schema, view in con.execute(query="SELECT schema_name, view_name FROM duckdb_views() WHERE NOT internal "
-                                          "AND schema_name = 'hr'").fetchall():
-        con.execute(query=f'SELECT * FROM "{schema}"."{view}" LIMIT 0')
-    con.close()
+    for schema, view in target_query(paths=paths, sql="SELECT schema_name, view_name FROM duckdb_views() WHERE NOT "
+                                                      "internal AND database_name = current_database() AND "
+                                                      "schema_name = 'hr'"):
+        target_query(paths=paths, sql=f'SELECT * FROM "{schema}"."{view}" LIMIT 0')
 
 
 def watermark_config(paths, **refresh):
@@ -588,8 +602,8 @@ def test_watermark_needs_a_key_and_a_timestamp_column(paths):
     assert "unchanged (fingerprint" in out, out     # no key: whole-table change detection
     config = make_config(paths=paths, objects=[{"db_schemas": ["hr"], "tables": ["events"], "views": []}], columns=[],
                          refresh={"mode": "incremental", "keys": {"hr.events": ["ID"]}, "watermark_column": "PAYLOAD"})
-    from adbc_replicate.planner import build_plan
-    from adbc_replicate.sources import make_source
+    from adbc_replicate_hardcharger.planner import build_plan
+    from adbc_replicate_hardcharger.sources import make_source
     source = make_source(config=config.source)
     conn = source.connect()
     try:

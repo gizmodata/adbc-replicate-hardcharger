@@ -15,7 +15,7 @@ from conftest import (
     run,
 )
 
-from adbc_replicate.engine import EXIT_OK
+from adbc_replicate_hardcharger.engine import EXIT_OK
 
 pytestmark = pytest.mark.integration
 
@@ -44,7 +44,7 @@ def param_source(oracle):
     system.close()
 
 
-def test_parameterized_view_gets_a_table_macro(param_source, gizmosql, prefix):
+def test_parameterized_view_gets_a_table_macro(param_source, hardcharger, prefix):
     config = make_config(prefix=prefix, source=oracle_source(), objects=[{"db_schemas": [SCHEMA],
                                                                          "target_db_schema": f"{prefix}_par"}],
                          views={"source_pseudo_columns": "null", "sys_context_macros": True, "source_time_zone": "UTC"})
@@ -62,10 +62,10 @@ def test_parameterized_view_gets_a_table_macro(param_source, gizmosql, prefix):
         for arguments, cutoff, item in cases:
             expected = sorted(tuple(int(v) if not hasattr(v, "year") else v for v in row) for row in
                               query(conn=source, sql=QUERY.format(schema=SCHEMA, cutoff=cutoff, item=item)))
-            actual = sorted(query(conn=gizmosql, sql=f"SELECT id, item_id, entered FROM {prefix}_par.entries_as_of({arguments})"))
+            actual = sorted(query(conn=hardcharger, sql=f"SELECT id, item_id, entered FROM {prefix}_par.entries_as_of({arguments})"))
             assert actual == expected, (arguments, actual, expected)
             assert len(expected) > 0
         # the view itself: no parameters set
-        assert len(query(conn=gizmosql, sql=f"SELECT * FROM {prefix}_par.entries_as_of")) == 20
+        assert len(query(conn=hardcharger, sql=f"SELECT * FROM {prefix}_par.entries_as_of")) == 20
     finally:
         source.close()

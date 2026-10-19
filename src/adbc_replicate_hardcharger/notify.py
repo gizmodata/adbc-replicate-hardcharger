@@ -48,7 +48,7 @@ def build_payload(outcome: str, exit_code: int, run_id: str | None, replication:
         return {name: (clip(text=err) if include_errors else None) for name, err in items.items()}
 
     return {
-        "event": "adbc_replicate.run_finished" if outcome != TEST else "adbc_replicate.test",
+        "event": "adbc_replicate_hardcharger.run_finished" if outcome != TEST else "adbc_replicate_hardcharger.test",
         "outcome": outcome,
         "exit_code": exit_code,
         "replication": replication,
@@ -70,7 +70,7 @@ def build_payload(outcome: str, exit_code: int, run_id: str | None, replication:
 def slack_message(payload: dict) -> dict:
     """Slack Block Kit message (within Slack's limits: header 150 chars, section text 3,000)."""
     outcome = payload["outcome"]
-    title = f"{_EMOJI[outcome]} {payload['replication'] or 'adbc-replicate'}: {_LABEL[outcome]}"[:150]
+    title = f"{_EMOJI[outcome]} {payload['replication'] or 'adbc-replicate-hardcharger'}: {_LABEL[outcome]}"[:150]
     stats = payload["stats"]
     fields = [f"*Source → target*\n{payload['source']} → {payload['target']}"
               + (f" ({payload['catalog']})" if payload["catalog"] else "")]
@@ -99,7 +99,8 @@ def slack_message(payload: dict) -> dict:
                            "text": {"type": "mrkdwn", "text": f"*{kind} ({len(items)})*\n" + "\n".join(lines)}})
             blocks[-1]["text"]["text"] = blocks[-1]["text"]["text"][:3000]
     blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": (
-        f"run `{payload['run_id']}` · host `{payload['host']}` · adbc-replicate {payload['tool_version']}")}]})
+        f"run `{payload['run_id']}` · host `{payload['host']}` · "
+        f"adbc-replicate-hardcharger {payload['tool_version']}")}]})
     return {"text": title, "blocks": blocks}
 
 
@@ -109,7 +110,7 @@ def send(url: str, body: dict, timeout: float) -> None:
     for attempt in (1, 2):
         request = urllib.request.Request(url=url, data=data, method="POST",
                                          headers={"Content-Type": "application/json",
-                                                  "User-Agent": f"adbc-replicate/{__version__}"})
+                                                  "User-Agent": f"adbc-replicate-hardcharger/{__version__}"})
         try:
             with urllib.request.urlopen(url=request, timeout=timeout) as response:
                 response.read()

@@ -16,7 +16,7 @@ from conftest import (
     run,
 )
 
-from adbc_replicate.engine import EXIT_OK
+from adbc_replicate_hardcharger.engine import EXIT_OK
 
 pytestmark = pytest.mark.integration
 
@@ -67,20 +67,20 @@ def config(prefix, **refresh):
                        refresh={"mode": "incremental", **refresh})
 
 
-def assert_identical(source, gizmosql, prefix):
+def assert_identical(source, hardcharger, prefix):
     for table, order in TABLES.items():
         expected = query(conn=source, sql=f"SELECT * FROM {SCHEMA}.{table} ORDER BY {order}")
-        actual = query(conn=gizmosql, sql=f"SELECT * FROM {prefix}_inc.{table.lower()} ORDER BY {order}")
+        actual = query(conn=hardcharger, sql=f"SELECT * FROM {prefix}_inc.{table.lower()} ORDER BY {order}")
         assert actual == expected, f"{table}: {len(actual)} target rows vs {len(expected)} source rows"
 
 
-def test_incremental_merges_changes_and_deletes(inc_source, gizmosql, prefix):
+def test_incremental_merges_changes_and_deletes(inc_source, hardcharger, prefix):
     source = oracle_connect()
     wait_for_flashback(conn=source)
 
     summary, out = run(config=config(prefix=prefix))               # first run: whole tables + change tokens
     assert summary.exit_code == EXIT_OK and summary.stats["tables_copied"] == 3, out
-    assert_identical(source=source, gizmosql=gizmosql, prefix=prefix)
+    assert_identical(source=source, hardcharger=hardcharger, prefix=prefix)
 
     execute(conn=inc_source, statements=[
         f"UPDATE {SCHEMA}.orders SET status = 'shipped', amount = amount + 1 WHERE id IN (10, 2500, 4999)",
@@ -99,25 +99,25 @@ def test_incremental_merges_changes_and_deletes(inc_source, gizmosql, prefix):
     assert summary.stats["rows_deleted"] == 1 + 3, out                                        # order 77, order 6's lines
     # only blocks touched since the last run are read, never the whole table
     assert summary.stats["rows_merged"] < 5000 + 9000, out
-    assert_identical(source=source, gizmosql=gizmosql, prefix=prefix)
+    assert_identical(source=source, hardcharger=hardcharger, prefix=prefix)
 
     summary, out = run(config=config(prefix=prefix))               # nothing changed since
     assert summary.exit_code == EXIT_OK and summary.stats["rows_merged"] == 0, out
     assert summary.stats["rows_deleted"] == 0, out
-    assert_identical(source=source, gizmosql=gizmosql, prefix=prefix)
+    assert_identical(source=source, hardcharger=hardcharger, prefix=prefix)
 
     # without delete detection, the row-count check notices the deleted row and copies the table whole
     execute(conn=inc_source, statements=[f"DELETE FROM {SCHEMA}.orders WHERE id = 78", "COMMIT"])
     summary, out = run(config=config(prefix=prefix, detect_deletes=False))
     assert summary.exit_code == EXIT_OK and summary.stats.get("rows_deleted", 0) == 0, out
     assert "INCSRC.ORDERS: " in out and "copying it whole" in out, out
-    assert query(conn=gizmosql, sql=f"SELECT count(*) FROM {prefix}_inc.orders WHERE id = 78")[0][0] == 0
-    assert_identical(source=source, gizmosql=gizmosql, prefix=prefix)
+    assert query(conn=hardcharger, sql=f"SELECT count(*) FROM {prefix}_inc.orders WHERE id = 78")[0][0] == 0
+    assert_identical(source=source, hardcharger=hardcharger, prefix=prefix)
     source.close()
 
 
 def test_plan_shows_which_tables_are_incremental(inc_source, prefix):
-    from adbc_replicate.engine import Replicator, RunOptions
+    from adbc_replicate_hardcharger.engine import Replicator, RunOptions
     replicator = Replicator(config=config(prefix=prefix), options=RunOptions())
     conn = replicator.source.connect()
     try:

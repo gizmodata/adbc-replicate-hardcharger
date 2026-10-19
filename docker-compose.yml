@@ -1,17 +1,7 @@
 # Test services for the integration suite (same images and ports as CI):
 #   docker compose up -d --wait
 #   pytest -m integration
-#   pytest -m hardcharger      (needs adbc-driver-hardcharger installed; see README, Hardcharger)
 services:
-  gizmosql:
-    image: gizmodata/gizmosql:v1.41.0-slim
-    ports: ["31377:31337"]
-    environment:
-      GIZMOSQL_USERNAME: gizmosql
-      GIZMOSQL_PASSWORD: gizmosql
-      TLS_ENABLED: "0"
-      DATABASE_FILENAME: /tmp/target.duckdb
-
   hardcharger:
     image: ghcr.io/gizmodata/hardcharger:main
     ports: ["127.0.0.1:31387:31337"]
