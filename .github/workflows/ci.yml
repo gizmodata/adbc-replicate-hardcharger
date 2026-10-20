@@ -296,6 +296,7 @@ jobs:
       - run: rm wheels/*.tar.gz && ls wheels
       - run: docker build -t adbc-replicate-hardcharger:ci .
       - run: docker run --rm adbc-replicate-hardcharger:ci --version
+      - run: docker run --rm --entrypoint test adbc-replicate-hardcharger:ci -s /opt/adbc-replicate-hardcharger/THIRD_PARTY_NOTICES.txt
       - name: Seed PostgreSQL
         run: |
           docker exec ${{ job.services.postgres.id }} psql -U postgres -d source -v ON_ERROR_STOP=1 -c "

@@ -16,6 +16,8 @@ never published.
 
 ### Changed
 
+- The container ships the installed dependencies' license texts in
+  `/opt/adbc-replicate-hardcharger/THIRD_PARTY_NOTICES.txt`, with its own LICENSE and NOTICE.
 - The repository's public files: NOTICE (naming adbc-replicate as the origin), CONTRIBUTING.md
   with the Developer Certificate of Origin sign-off, SECURITY.md and CODE_OF_CONDUCT.md.
 
