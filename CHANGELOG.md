@@ -16,6 +16,9 @@ never published.
 
 ### Changed
 
+- The repository's public files: NOTICE (naming adbc-replicate as the origin), CONTRIBUTING.md
+  with the Developer Certificate of Origin sign-off, SECURITY.md and CODE_OF_CONDUCT.md.
+
 - CI builds the driver from hardcharger-adbc `13f4eb4` (Warp SQL protocol 1.0.0, on warp-sql-adbc
   `a81c326`; was `9a087be`), tested against `hardcharger-server` 2.0.0-rc.1. The 1.0.0 driver commits
   a partitioned ingest with its `part_count`, which the server now requires: with the old driver every
