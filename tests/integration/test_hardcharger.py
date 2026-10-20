@@ -308,8 +308,8 @@ def batches(rows: int, batch_rows: int) -> pa.RecordBatchReader:
     return pa.RecordBatchReader.from_batches(schema=table.schema, batches=table.to_batches(max_chunksize=batch_rows))
 
 
-@pytest.mark.parametrize(("parts", "expected"), [(8, (0, 1, 8)), (1, (1, 0, 0))])
-def test_ingest_parts_roll_back_with_the_transaction(proxied, hardcharger, prefix, parts, expected):
+@pytest.mark.parametrize("parts", [8, 1])
+def test_ingest_parts_roll_back_with_the_transaction(proxied, hardcharger, prefix, parts):
     """The engine relies on a load being part of the target transaction: readers keep the old copy until
     commit, and a failed load (or a merge mismatch) rolls back. Partitioned uploads go over other
     connections, so check that this still holds for them."""
@@ -325,7 +325,13 @@ def test_ingest_parts_roll_back_with_the_transaction(proxied, hardcharger, prefi
         assert target.ingest(conn=conn, db_schema="main", table=table, reader=batches(rows=200_000,
                                                                                       batch_rows=20_000)) == 200_000
         counts, lines = requests()
-        assert counts == expected, lines
+        if parts == 1:
+            assert counts == (1, 0, 0), lines
+        else:
+            # One partitioned ingest. The driver hands 16,384-row slices to whichever part is ready
+            # for its next one, so a part may end up carrying none: at most `parts` carry rows.
+            single, partitioned, with_rows = counts
+            assert (single, partitioned) == (0, 1) and 1 <= with_rows <= parts, lines
         assert query(conn=hardcharger, sql=f"SELECT count(*) FROM {table}") == [(1,)]     # not committed yet
         assert query(conn=conn, sql=f"SELECT count(*), count(DISTINCT id) FROM {table}") == [(200_000, 200_000)]
         conn.rollback()

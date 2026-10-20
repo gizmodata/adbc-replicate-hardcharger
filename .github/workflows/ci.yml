@@ -26,7 +26,7 @@ concurrency:
 # Anything missing FAILS; nothing is skipped.
 env:
   HARDCHARGER_IMAGE: ghcr.io/gizmodata/hardcharger:main
-  HARDCHARGER_ADBC_COMMIT: 9a087bed2bc4ed3b514624c20228e705eaa65355
+  HARDCHARGER_ADBC_COMMIT: 13f4eb49156a5385173d836aa61cd70ad0662d69
 
 jobs:
   lint:

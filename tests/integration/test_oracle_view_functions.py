@@ -8,9 +8,11 @@ from adbc_replicate_hardcharger.views import ViewTranslationError, translate_vie
 
 pytestmark = pytest.mark.integration
 
-# Hardcharger 0.3.0's sensitive-path guard refuses SQL with any string literal containing '{' or '*' (as a
-# "user credential store" path; reported upstream), so a translation that needs such a literal can't be
-# created there. Each test lists those cases exactly, so a server fix, or a new refusal, fails it.
+# Hardcharger 0.3.0's sensitive-path guard refused SQL with any string literal containing '{' or '*' (as a
+# "user credential store" path), so translations that need such a literal (format('{:,}', ...), a regex
+# quantifier, RPAD's '*') couldn't be created there. Hardcharger 2.0.0 guards paths where the engine opens
+# them and refuses no literal. Each test asserts that nothing is refused, so a new refusal fails it, with
+# the cases it refused.
 GUARD = "Hardcharger blocked access to"
 
 
@@ -35,7 +37,6 @@ CASES = [(v, "NUMBER", "DECIMAL(12,2)", f) for v in NUMBERS for f in ("fm0000000
          for f in ("MI", "YYYYMMDD", "DAY", "fmDAY", "YYYY-MM-DD HH24:MI:SS", "DD/MM/YY HH12", "HH:MI", 'yyyy"Q"mm')]
 
 
-TO_CHAR_REFUSED = {"fm999,999,990"}           # translated with format('{:,}', ...)
 
 
 def test_to_char_matches_oracle(oracle, hardcharger, prefix):
@@ -54,7 +55,7 @@ def test_to_char_matches_oracle(oracle, hardcharger, prefix):
         if actual != expected:
             mismatches.append(f"TO_CHAR({value}, {fmt!r}): Oracle {expected!r}, translated {actual!r}")
     assert not mismatches, "\n".join(mismatches)
-    assert set(refused) == TO_CHAR_REFUSED, sorted(set(refused))
+    assert not refused, sorted(set(refused))
 
 
 DATE_CASES = ["TRUNC(x)", "TRUNC(x, 'DD')", "TRUNC(x, 'hh')", "TRUNC(x, 'MM')", "TRUNC(x, 'YYYY')", "TRUNC(x, 'IW')",
@@ -198,7 +199,7 @@ def test_regex_functions_match_oracle(oracle, hardcharger, prefix):
         if actual != expected:
             mismatches.append(f"{expression} on {value}: Oracle {expected!r}, translated {actual!r}")
     assert not mismatches, "\n".join(mismatches)
-    assert set(refused) == {"REGEXP_REPLACE(s, '(\\d{2})(\\d)', '\\2-\\1')"}, sorted(set(refused))
+    assert not refused, sorted(set(refused))
 
 
 # INSTR with a start position and/or occurrence: overlapping matches, backward search from a negative
@@ -487,7 +488,7 @@ def test_expressions_match_oracle(oracle, hardcharger, prefix):
         if actual != expected:
             mismatches.append(f"{expression}: Oracle {expected!r}, translated {actual!r}")
     assert not mismatches, "\n".join(mismatches)
-    assert set(refused) == {"RPAD(n, 6, '*')"}, sorted(set(refused))
+    assert not refused, sorted(set(refused))
 
 
 # Query shapes: whole rows compared (sorted) between Oracle and the translated view in Hardcharger.

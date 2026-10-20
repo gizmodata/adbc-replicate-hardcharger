@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- CI builds the driver from hardcharger-adbc `13f4eb4` (Warp SQL protocol 1.0.0, on warp-sql-adbc
+  `a81c326`; was `9a087be`), tested against `hardcharger-server` 2.0.0-rc.1. The 1.0.0 driver commits
+  a partitioned ingest with its `part_count`, which the server now requires: with the old driver every
+  partitioned load into the `:main` server failed at commit ("'part_count' must be the number of
+  parts"), the Snowflake CI job among them.
+- Tests: Hardcharger 2.0.0 guards paths where the engine opens them and refuses no string literal,
+  so the Oracle view-function tests expect no refusal (and compare every case with Oracle); the
+  ingest-parts test accepts fewer parts than asked for, since the driver hands 16,384-row slices to
+  whichever part is ready.
+
 ### Documentation
 
 - The README banner is the new Hardcharger™ logo, the bull mascot lockup in a light and a dark
