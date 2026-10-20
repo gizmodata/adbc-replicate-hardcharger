@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-20
+
+<!-- Set the date above at tag time. -->
+
+The first release. Its version follows the Hardcharger server's (2.0.0); 0.1.0 below was built but
+never published.
+
 ### Changed
 
 - CI builds the driver from hardcharger-adbc `13f4eb4` (Warp SQL protocol 1.0.0, on warp-sql-adbc

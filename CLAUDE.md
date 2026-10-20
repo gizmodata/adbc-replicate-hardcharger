@@ -8,8 +8,8 @@ Project notes for Claude and other contributors.
 DuckDB 2.0 server, over Warp SQL), the only target. Python; the data path is Arrow C streams between
 drivers (`fetch_record_batch` → `adbc_ingest`), so Python never touches rows. Derived from the public
 gizmodata/adbc-replicate (0.6.0), whose lessons the defaults encode (12 MiB batch coalescing, one catalog
-snapshot instead of per-object queries, `abandoned` runs). This repository is INTERNAL until Hardcharger is
-announced: never push to or mention it in the public adbc-replicate. Keep the config schema,
+snapshot instead of per-object queries, `abandoned` runs). Hardcharger work stays here, not in
+adbc-replicate. Keep the config schema,
 `plan --format json` and the event stream stable and UI-friendly (a wizard may write the config).
 
 ## Layout

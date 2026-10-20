@@ -15,7 +15,8 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Until Hardcharger is announced its pieces are internal, reached without a personal token:
+# While the Hardcharger repositories and image are private, they are reached without a personal token
+# (once they are public, and the driver is on PyPI, none of this is needed):
 #   - ghcr.io/gizmodata/hardcharger, pulled with this workflow's GITHUB_TOKEN: the package grants this
 #     repository read access (package settings, Manage Actions access).
 #   - adbc-driver-hardcharger, not on PyPI yet: the `driver` job builds it from gizmodata/hardcharger-adbc at
@@ -45,7 +46,7 @@ jobs:
     env:
       GOPRIVATE: github.com/gizmodata/*
     steps:
-      - name: Deploy keys for the internal repositories
+      - name: Deploy keys for the private repositories
         env:
           DEPLOY_KEY_HARDCHARGER_ADBC: ${{ secrets.DEPLOY_KEY_HARDCHARGER_ADBC }}
           DEPLOY_KEY_WARP_SQL_ADBC: ${{ secrets.DEPLOY_KEY_WARP_SQL_ADBC }}

@@ -148,7 +148,7 @@ adbc-replicate-hardcharger run --config replicate.yaml
   ✅ shop.customer_totals → shop.customer_totals
 
 ✨ 2 table(s) to copy, 1 view(s) ready
-🚀 adbc-replicate-hardcharger 0.1.0: postgresql → hardcharger (catalog warehouse), run 3abe41f2-53c8-458c-afba-f385fb680e97
+🚀 adbc-replicate-hardcharger 2.0.0: postgresql → hardcharger (catalog warehouse), run 3abe41f2-53c8-458c-afba-f385fb680e97
 📸 Consistent read: exported snapshot 00000003-00000032-1
 🔍 Discovering source objects…
 🗺️  2 table(s) and 1 view(s) selected (0.0s)
