@@ -12,7 +12,7 @@ requires-python = ">=3.11"
 authors = [{ name = "GizmoData LLC", email = "info@gizmodata.com" }]
 keywords = ["adbc", "arrow", "replication", "hardcharger", "duckdb", "oracle", "postgresql", "snowflake", "etl", "elt"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Topic :: Database",
     "Programming Language :: Python :: 3",
@@ -23,7 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.15",
 ]
 dependencies = [
-    "adbc-driver-hardcharger>=0.1.0",
+    "adbc-driver-hardcharger>=2.0.0",
     "adbc-driver-manager>=1.12.0",
     "pyarrow>=26.0.0",
     "sqlglot>=30.23.0",
