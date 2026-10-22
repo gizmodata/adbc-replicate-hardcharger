@@ -1,8 +1,8 @@
 <p align="center">
   <a href="https://github.com/gizmodata/hardcharger">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hardcharger-banner-dark.png">
-      <img src="docs/assets/hardcharger-banner-light.png" alt="Hardcharger™" width="400">
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/gizmodata/adbc-replicate-hardcharger/main/docs/assets/hardcharger-banner-dark.png">
+      <img src="https://raw.githubusercontent.com/gizmodata/adbc-replicate-hardcharger/main/docs/assets/hardcharger-banner-light.png" alt="Hardcharger™" width="400">
     </picture>
   </a>
 </p>
@@ -18,7 +18,7 @@
 [![PyPI Downloads](https://img.shields.io/pepy/dt/adbc-replicate-hardcharger.svg)](https://pypi.org/project/adbc-replicate-hardcharger/)
 [![Container image](https://img.shields.io/badge/ghcr.io-adbc--replicate--hardcharger-green.svg?logo=Docker)](https://github.com/gizmodata/adbc-replicate-hardcharger/pkgs/container/adbc-replicate-hardcharger)
 [![Helm chart](https://img.shields.io/badge/Helm-oci%3A%2F%2Fghcr.io%2Fgizmodata%2Fcharts-0F1689.svg?logo=Helm)](#-run-it-on-kubernetes)
-[![License](https://img.shields.io/github/license/gizmodata/adbc-replicate-hardcharger)](LICENSE)
+[![License](https://img.shields.io/github/license/gizmodata/adbc-replicate-hardcharger)](https://github.com/gizmodata/adbc-replicate-hardcharger/blob/main/LICENSE)
 [![Slack Community](https://img.shields.io/badge/Slack-GizmoData%20Community-4A154B?logo=slack)](https://join.slack.com/t/gizmodatacommunity/shared_invite/zt-42jk7kdti-SJp7qk7d6XYCIKfBG~4HrA)
 
 You describe *what* to replicate in a YAML file — which db_schemas, which tables and views
@@ -850,7 +850,7 @@ GizmoData LLC.
 
 ## License
 
-[Apache License 2.0](LICENSE) — Copyright 2026 GizmoData LLC. Derived from
+[Apache License 2.0](https://github.com/gizmodata/adbc-replicate-hardcharger/blob/main/LICENSE) — Copyright 2026 GizmoData LLC. Derived from
 [adbc-replicate](https://github.com/gizmodata/adbc-replicate) (Apache 2.0, GizmoData LLC).
 
 ---

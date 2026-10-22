@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-10-22
+
+### Documentation
+
+- Fix the README banner on PyPI with absolute image URLs, and make repository file links absolute.
+- Retain the total PyPI downloads badge in both the README and package description.
+
 ## [2.0.0] - 2026-10-21
 
 ### Changed

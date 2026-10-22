@@ -2,8 +2,8 @@ apiVersion: v2
 name: adbc-replicate-hardcharger
 description: Scheduled ADBC-to-ADBC replication into Hardcharger (a Kubernetes CronJob running adbc-replicate-hardcharger)
 type: application
-version: 2.0.0
-appVersion: "2.0.0"
+version: 2.0.1
+appVersion: "2.0.1"
 home: https://github.com/gizmodata/adbc-replicate-hardcharger
 sources:
   - https://github.com/gizmodata/adbc-replicate-hardcharger
