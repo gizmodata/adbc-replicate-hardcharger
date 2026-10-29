@@ -1,4 +1,4 @@
-"""Hardcharger source: a DuckDB 2.0 server, read through adbc-driver-hardcharger (Warp SQL).
+"""Hardcharger source: a DuckDB 2.0 server, read through adbc-driver-hardcharger (Chargewire).
 
 The SQL is DuckDB's, so discovery, view definitions and fingerprints are the DuckDB source's;
 only connecting differs. Large results arrive split into partitions read at once (the driver's

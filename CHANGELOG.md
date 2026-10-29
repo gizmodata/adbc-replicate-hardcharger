@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- adbc-replicate-hardcharger now uses the Chargewire protocol and drivers, the new name of the protocol
+  `adbc-driver-hardcharger` speaks; the driver options a config can pass are `adbc.hardcharger.*` and
+  `adbc.chargewire.*`. Existing configs keep working, and so do Hardcharger servers released before the rename.
+
 ## [2.0.1] - 2026-10-22
 
 ### Documentation
@@ -29,7 +35,7 @@ never published.
 - The repository's public files: NOTICE (naming adbc-replicate as the origin), CONTRIBUTING.md
   with the Developer Certificate of Origin sign-off, SECURITY.md and CODE_OF_CONDUCT.md.
 
-- CI builds the driver from hardcharger-adbc `13f4eb4` (Warp SQL protocol 1.0.0, on warp-sql-adbc
+- CI builds the driver from hardcharger-adbc `13f4eb4` (Chargewire protocol 1.0.0, on chargewire-adbc
   `a81c326`; was `9a087be`), tested against `hardcharger-server` 2.0.0-rc.1. The 1.0.0 driver commits
   a partitioned ingest with its `part_count`, which the server now requires: with the old driver every
   partitioned load into the `:main` server failed at commit ("'part_count' must be the number of

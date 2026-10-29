@@ -99,7 +99,7 @@ class DuckDBSource(_SourceBase):
 
 
 class _HardchargerConnection(_Model):
-    """How to reach a Hardcharger server (DuckDB 2.0 over the Warp SQL protocol), as a source or a target."""
+    """How to reach a Hardcharger server (DuckDB 2.0 over the Chargewire protocol), as a source or a target."""
 
     uri: str = Field(description="e.g. hardcharger://host (HTTPS on port 31337), hardcharger://host:port, or "
                                  "hardcharger://host?tls=false for plain HTTP (development)")
@@ -128,7 +128,7 @@ class HardchargerTarget(_HardchargerConnection):
 
     type: Literal["hardcharger"] = "hardcharger"
     options: dict[str, str] = Field(default_factory=dict, description="Extra ADBC database options "
-                                                                      "(adbc.hardcharger.*, adbc.warp.*).")
+                                                                      "(adbc.hardcharger.*, adbc.chargewire.*).")
     checkpoint: bool = Field(
         default=True,
         description="Run CHECKPOINT before and after a load so the WAL is folded into the database "

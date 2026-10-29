@@ -68,13 +68,13 @@ def test_json_schema_has_hardcharger():
 def test_target_connects_without_autocommit_and_with_ingest_parts(driver):
     target = make_target(config=config(target={
         "type": "hardcharger", "uri": "hardcharger://db.example.com:4433", "username": "loader", "password": "pw",
-        "tls_root_certs": "/etc/ca.pem", "ingest_parts": 3, "options": {"adbc.warp.statement.result_partitions": "1"}}
+        "tls_root_certs": "/etc/ca.pem", "ingest_parts": 3, "options": {"adbc.chargewire.statement.result_partitions": "1"}}
     ).target)
     target._open()
     assert driver == [{"uri": "hardcharger://db.example.com:4433", "username": "loader", "password": "pw",
                        "tls_skip_verify": False, "tls_root_certs": "/etc/ca.pem", "autocommit": False,
                        "db_kwargs": {"adbc.hardcharger.ingest.parts": "3",
-                                     "adbc.warp.statement.result_partitions": "1"}}]
+                                     "adbc.chargewire.statement.result_partitions": "1"}}]
 
 
 def test_target_options_override_ingest_parts(driver):
@@ -95,14 +95,14 @@ def test_source_autocommit_follows_consistency(driver, consistency, autocommit):
 
 def test_source_hint_for_a_hugeint_too_large_for_decimal128():
     source = make_source(config=config(source={"type": "hardcharger", "uri": "hardcharger://h"}).source)
-    hint = source.error_hint(error="InternalError: INTERNAL: [warpsql] ExecuteQuery: Conversion Error: Hardcharger "
+    hint = source.error_hint(error="InternalError: INTERNAL: [chargewire] ExecuteQuery: Conversion Error: Hardcharger "
                                    "cannot send the HUGEINT value 1701... as Arrow decimal128(38, 0)")
     assert "CAST({column} AS VARCHAR)" in hint
     assert source.error_hint(error="some other failure") is None
 
 
 def test_server_draining_is_transient_and_never_ran():
-    error = Exception("OperationalError: [warpsql] ExecuteQuery: the server is shutting down "
+    error = Exception("OperationalError: [chargewire] ExecuteQuery: the server is shutting down "
                       "(server_draining, HTTP 503, request r_1)")
     assert is_transient(error=error) and _failed_before_running(error=error)
     assert not is_transient(error=Exception("Catalog Error: ... (sql_error, HTTP 400, request r_2)"))

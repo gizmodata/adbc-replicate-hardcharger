@@ -269,7 +269,7 @@ def test_reporter_survives_a_closed_pipe():
     reporter.emit(event="y", text="still fine")
 
 
-DRAINING = ("UNAVAILABLE: [warpsql] bulk ingest into employees: Hardcharger is shutting down "
+DRAINING = ("UNAVAILABLE: [chargewire] bulk ingest into employees: Hardcharger is shutting down "
             "(server_draining, HTTP 503, request r_1)")
 
 
@@ -298,7 +298,7 @@ def test_non_transient_ingest_error_is_not_retried(paths, monkeypatch):
 
     def broken_ingest(self, conn, db_schema, table, reader, track=None):
         calls.append(table)
-        raise RuntimeError("PAYLOAD_TOO_LARGE: [warpsql] bulk ingest into dept: Request Entity Too Large (HTTP 413)")
+        raise RuntimeError("PAYLOAD_TOO_LARGE: [chargewire] bulk ingest into dept: Request Entity Too Large (HTTP 413)")
 
     monkeypatch.setattr(HardchargerTarget, "ingest", broken_ingest)
     summary, out = run(config=make_config(paths=paths, ingest={"retry_wait_seconds": 0}), skip_views=True)
@@ -329,9 +329,9 @@ def test_statement_retried_only_when_it_never_ran(monkeypatch):
         def cursor(self):
             return FakeCursor(errors=self.errors)
 
-    refused = "UNAVAILABLE: [warpsql] ExecuteQuery: shutting down (server_draining, HTTP 503, request r_1)"
+    refused = "UNAVAILABLE: [chargewire] ExecuteQuery: shutting down (server_draining, HTTP 503, request r_1)"
     assert target_mod.HardchargerTarget.query(conn=FakeConn(errors=[refused, refused]), sql="SELECT 1") == [(1,)]
-    executed = "IO: [warpsql] ExecuteUpdate: read tcp 127.0.0.1:1->127.0.0.1:2: connection reset by peer"
+    executed = "IO: [chargewire] ExecuteUpdate: read tcp 127.0.0.1:1->127.0.0.1:2: connection reset by peer"
     with pytest.raises(RuntimeError, match="ExecuteUpdate"):     # may have run: never resent
         target_mod.HardchargerTarget.execute(conn=FakeConn(errors=[executed]), sql="INSERT ...")
 

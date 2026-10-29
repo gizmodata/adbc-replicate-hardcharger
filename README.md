@@ -17,7 +17,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/adbc-replicate-hardcharger?logo=pypi)](https://pypi.org/project/adbc-replicate-hardcharger/)
 [![PyPI Downloads](https://img.shields.io/pepy/dt/adbc-replicate-hardcharger.svg)](https://pypi.org/project/adbc-replicate-hardcharger/)
 [![Hardcharger ADBC driver](https://img.shields.io/badge/driver-Hardcharger%20ADBC-f15a24.svg)](https://github.com/gizmodata/hardcharger-adbc)
-[![Warp SQL protocol](https://img.shields.io/badge/protocol-Warp%20SQL-31a8db.svg)](https://github.com/gizmodata/warp-sql)
+[![Chargewire protocol](https://img.shields.io/badge/protocol-Chargewire-31a8db.svg)](https://github.com/gizmodata/chargewire)
 [![GizmoData](https://img.shields.io/badge/by-GizmoData%E2%84%A2-f15a24.svg)](https://gizmodata.com)
 [![Container image](https://img.shields.io/badge/ghcr.io-adbc--replicate--hardcharger-green.svg?logo=Docker)](https://github.com/gizmodata/adbc-replicate-hardcharger/pkgs/container/adbc-replicate-hardcharger)
 [![Helm chart](https://img.shields.io/badge/Helm-oci%3A%2F%2Fghcr.io%2Fgizmodata%2Fcharts-0F1689.svg?logo=Helm)](#-run-it-on-kubernetes)
@@ -31,7 +31,7 @@ does the rest:
 ```mermaid
 flowchart LR
     S[("Source<br/>Oracle · PostgreSQL<br/>Snowflake · DuckDB<br/>Hardcharger")] -- "ADBC<br/>Arrow record batches" --> R["adbc-replicate-hardcharger<br/>rename · coalesce · strip types<br/>(one batch in memory)"]
-    R -- "ADBC bulk ingest<br/>(Warp SQL, in parts)" --> T[("Hardcharger<br/>tables + translated views")]
+    R -- "ADBC bulk ingest<br/>(Chargewire, in parts)" --> T[("Hardcharger<br/>tables + translated views")]
     R -. "sync state, run log" .-> T
 ```
 
@@ -46,7 +46,7 @@ loads); this product targets Hardcharger, GizmoData's DuckDB 2.0 server, only.
 
 ## ✨ Features
 
-- 🔌 **Sources:** Oracle ([adbc-driver-oracle](https://github.com/gizmodata/adbc-driver-oracle) — no Oracle Client needed), PostgreSQL, Snowflake, DuckDB, Hardcharger. **Target:** Hardcharger, loaded in parallel parts over [Warp SQL](https://github.com/gizmodata/warp-sql).
+- 🔌 **Sources:** Oracle ([adbc-driver-oracle](https://github.com/gizmodata/adbc-driver-oracle) — no Oracle Client needed), PostgreSQL, Snowflake, DuckDB, Hardcharger. **Target:** Hardcharger, loaded in parallel parts over [Chargewire](https://github.com/gizmodata/chargewire).
 - 🎯 **Selection by pattern:** db_schemas, tables and views by case-insensitive glob (`SALES_*`) or `/regex/`, with excludes, per-rule target db_schema renames, and views that can be *materialized* as tables.
 - 🔒 **Column filtering and masking:** exclude or allow-list columns; mask them with `null`, `hash` (salted SHA-256), `redact` or any SQL expression. **Masks run inside the source database**, so the raw values never cross the network — and a mask rule that matches nothing fails the run instead of silently leaking a typo'd column.
 - 📸 **Consistent snapshots:** every table read from one point in time — `serializable` (one transaction) or `snapshot` (parallel workers sharing an Oracle SCN, a PostgreSQL exported snapshot, or a Snowflake time-travel timestamp). Foreign keys line up.
@@ -697,7 +697,7 @@ objects:
 ## 🏎️ The target: Hardcharger
 
 [Hardcharger](https://github.com/gizmodata/hardcharger) is GizmoData's DuckDB 2.0 server, spoken to over
-the [Warp SQL](https://github.com/gizmodata/warp-sql) protocol (HTTP) through
+the [Chargewire](https://github.com/gizmodata/chargewire) protocol (HTTP) through
 [adbc-driver-hardcharger](https://github.com/gizmodata/hardcharger-adbc). `target.type` is
 `hardcharger`, the default and the only target type:
 
@@ -716,9 +716,9 @@ target:
 - **Connections.** `hardcharger://host` is HTTPS on port 31337; `hardcharger://host:port` picks another
   port and `hardcharger://host?tls=false` is plain HTTP (development only). `tls_root_certs` trusts a
   private CA (a PEM file), `tls_skip_verify` skips verification (development only), and any
-  `adbc.hardcharger.*` / `adbc.warp.*` driver option goes in `options`.
+  `adbc.hardcharger.*` / `adbc.chargewire.*` driver option goes in `options`.
 - **Loads.** Each table's rows go up as `ingest_parts` parts at once, each over its own connection
-  (Warp SQL partitioned ingest), into the run's target transaction like any other statement: readers
+  (Chargewire partitioned ingest), into the run's target transaction like any other statement: readers
   keep the previous copy until it commits, and a failed or interrupted load rolls back, parts and all.
   Rows land in no defined order; `ingest_parts: 1` sends one stream in the source's order.
 - **Incremental loads** merge with DuckDB 2.0's `MERGE`, which refuses several changed rows with one key;

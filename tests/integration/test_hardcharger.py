@@ -1,4 +1,4 @@
-"""What is particular to Hardcharger™ (DuckDB 2.0 over Warp SQL, through adbc-driver-hardcharger), against
+"""What is particular to Hardcharger™ (DuckDB 2.0 over Chargewire, through adbc-driver-hardcharger), against
 a real server (ghcr.io/gizmodata/hardcharger:main; see docker-compose.yml): types, partitioned ingest and
 transactions, MERGE, and Hardcharger as a source.
 

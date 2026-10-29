@@ -5,7 +5,7 @@ Project notes for Claude and other contributors.
 ## What this is
 
 `adbc-replicate-hardcharger`: config-driven ADBC → ADBC replication into Hardcharger (GizmoData's
-DuckDB 2.0 server, over Warp SQL), the only target. Python; the data path is Arrow C streams between
+DuckDB 2.0 server, over Chargewire), the only target. Python; the data path is Arrow C streams between
 drivers (`fetch_record_batch` → `adbc_ingest`), so Python never touches rows. Derived from the public
 gizmodata/adbc-replicate (0.6.0), whose lessons the defaults encode (12 MiB batch coalescing, one catalog
 snapshot instead of per-object queries, `abandoned` runs). Hardcharger work stays here, not in
@@ -41,7 +41,7 @@ charts/adbc-replicate-hardcharger             Helm CronJob
 - Tests read only `ADBC_REPLICATE_HARDCHARGER_TEST_*` variables: developer shells export real
   credentials under generic names. Docker addresses are `127.0.0.1`, never `localhost`.
 - adbc-driver-hardcharger isn't on PyPI yet: CI's `driver` job builds it from gizmodata/hardcharger-adbc at
-  a pinned commit (read-only deploy keys DEPLOY_KEY_HARDCHARGER_ADBC / DEPLOY_KEY_WARP_SQL_ADBC; zig for a
+  a pinned commit (read-only deploy keys DEPLOY_KEY_HARDCHARGER_ADBC / DEPLOY_KEY_CHARGEWIRE_ADBC; zig for a
   glibc-2.17 library) and every job installs that artifact; Docker builds find it in `wheels/`. The test
   server is `ghcr.io/gizmodata/hardcharger:main`, pulled with GITHUB_TOKEN (the package grants this repo).
 - Integration tests FAIL (never skip) when a server is unreachable.
@@ -106,7 +106,7 @@ charts/adbc-replicate-hardcharger             Helm CronJob
 - DuckDB's Arrow export silently changes TIMETZ (drops the offset), BIT and BIGNUM (internal bytes), also
   nested. `Source.lossy_type()` names such types and the planner refuses them unmasked (`lossy_duckdb_type`
   matches type names only, never STRUCT field names like `"bit"`).
-- Hardcharger (DuckDB 2.0, Warp SQL): bulk ingest, partitioned or not, joins the session's transaction
+- Hardcharger (DuckDB 2.0, Chargewire): bulk ingest, partitioned or not, joins the session's transaction
   (rollback undoes it); `test_ingest_parts_roll_back_with_the_transaction` proves it through a recording
   proxy. DuckDB 2.0 `MERGE` refuses several source rows per key (1.5.6 picked one); `merge()` checks first
   either way. Hardcharger refuses a HUGEINT >= 10^38 instead of sending it (DuckDB 1.5 sends an

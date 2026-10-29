@@ -1,4 +1,4 @@
-"""The target: a Hardcharger server (DuckDB 2.0 over the Warp SQL protocol).
+"""The target: a Hardcharger server (DuckDB 2.0 over the Chargewire protocol).
 
 It speaks DuckDB SQL, so catalog introspection, view DDL and sync-state tables are written in it. Loads use
 ADBC bulk ingest (`adbc_ingest`, mode "replace", sent as `ingest_parts` parts at once) inside a transaction,
@@ -32,7 +32,7 @@ def is_transient(error: BaseException | str) -> bool:
 
 
 def _failed_before_running(error: BaseException) -> bool:
-    """True when a statement was refused before it ran, so it can be resent: a Warp SQL server that is
+    """True when a statement was refused before it ran, so it can be resent: a Chargewire server that is
     shutting down refuses new statements with 503 server_draining (spec §11.1)."""
     return "(server_draining," in str(error)
 
