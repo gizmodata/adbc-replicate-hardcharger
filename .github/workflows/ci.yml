@@ -15,15 +15,10 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# While the Hardcharger repositories and image are private, they are reached without a personal token
-# (once they are public, and the driver is on PyPI, none of this is needed):
-#   - ghcr.io/gizmodata/hardcharger, pulled with this workflow's GITHUB_TOKEN: the package grants this
-#     repository read access (package settings, Manage Actions access).
-#   - adbc-driver-hardcharger, not on PyPI yet: the `driver` job builds it from gizmodata/hardcharger-adbc at
-#     a pinned commit (its Go module needs gizmodata/warp-sql-adbc), each fetched with a read-only deploy key
-#     of that repository kept here as a secret (DEPLOY_KEY_HARDCHARGER_ADBC, DEPLOY_KEY_WARP_SQL_ADBC). Every
-#     other job installs it from that job's artifact. Once it is on PyPI, pip resolves it like any other
-#     dependency and the `driver` job can go.
+# ghcr.io/gizmodata/hardcharger is pulled with this workflow's GITHUB_TOKEN (no personal token): the package
+# grants this repository read access (package settings, Manage Actions access). The `driver` job builds
+# adbc-driver-hardcharger from gizmodata/hardcharger-adbc at a pinned commit; that repository and the Go modules it
+# needs are public, so they are fetched anonymously. Every other job installs the driver from that job's artifact.
 # Anything missing FAILS; nothing is skipped.
 env:
   HARDCHARGER_IMAGE: ghcr.io/gizmodata/hardcharger:main
@@ -43,36 +38,12 @@ jobs:
   driver:
     name: driver (adbc-driver-hardcharger)
     runs-on: ubuntu-latest
-    env:
-      GOPRIVATE: github.com/gizmodata/*
     steps:
-      - name: Deploy keys for the private repositories
-        env:
-          DEPLOY_KEY_HARDCHARGER_ADBC: ${{ secrets.DEPLOY_KEY_HARDCHARGER_ADBC }}
-          DEPLOY_KEY_WARP_SQL_ADBC: ${{ secrets.DEPLOY_KEY_WARP_SQL_ADBC }}
-        run: |
-          # One SSH host alias per repository, each with its own key; git (and so Go's module fetches)
-          # rewrites every spelling of that repository's URL to its alias.
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
-          for repo in hardcharger-adbc warp-sql-adbc; do
-            var="DEPLOY_KEY_$(echo "$repo" | tr 'a-z-' 'A-Z_')"
-            key="${!var}"
-            if [ -z "$key" ]; then
-              echo "::error::the $var secret is not set: the private key of a read-only deploy key of gizmodata/$repo"
-              exit 1
-            fi
-            printf '%s\n' "$key" > ~/.ssh/"$repo" && chmod 600 ~/.ssh/"$repo"
-            printf 'Host github.com-%s\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/%s\n  IdentitiesOnly yes\n' "$repo" "$repo" >> ~/.ssh/config
-            for from in "https://github.com/gizmodata/$repo" "ssh://git@github.com/gizmodata/$repo" "git@github.com:gizmodata/$repo"; do
-              git config --global --add url."git@github.com-$repo:gizmodata/$repo".insteadOf "$from"
-            done
-          done
       - name: gizmodata/hardcharger-adbc ${{ env.HARDCHARGER_ADBC_COMMIT }}
         run: |
           src="$RUNNER_TEMP/hardcharger-adbc"
           git init --quiet "$src"
-          git -C "$src" remote add origin git@github.com:gizmodata/hardcharger-adbc.git
+          git -C "$src" remote add origin https://github.com/gizmodata/hardcharger-adbc.git
           git -C "$src" fetch --quiet --depth 1 origin "$HARDCHARGER_ADBC_COMMIT"
           git -C "$src" checkout --quiet FETCH_HEAD
           test "$(git -C "$src" rev-parse HEAD)" = "$HARDCHARGER_ADBC_COMMIT"

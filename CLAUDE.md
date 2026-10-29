@@ -41,7 +41,7 @@ charts/adbc-replicate-hardcharger             Helm CronJob
 - Tests read only `ADBC_REPLICATE_HARDCHARGER_TEST_*` variables: developer shells export real
   credentials under generic names. Docker addresses are `127.0.0.1`, never `localhost`.
 - adbc-driver-hardcharger isn't on PyPI yet: CI's `driver` job builds it from gizmodata/hardcharger-adbc at
-  a pinned commit (read-only deploy keys DEPLOY_KEY_HARDCHARGER_ADBC / DEPLOY_KEY_CHARGEWIRE_ADBC; zig for a
+  a pinned commit (public, fetched anonymously; zig for a
   glibc-2.17 library) and every job installs that artifact; Docker builds find it in `wheels/`. The test
   server is `ghcr.io/gizmodata/hardcharger:main`, pulled with GITHUB_TOKEN (the package grants this repo).
 - Integration tests FAIL (never skip) when a server is unreachable.
