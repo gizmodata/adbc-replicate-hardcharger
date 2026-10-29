@@ -7,11 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-29
+
 ### Changed
 
 - adbc-replicate-hardcharger now uses the Chargewire protocol and drivers, the new name of the protocol
   `adbc-driver-hardcharger` speaks; the driver options a config can pass are `adbc.hardcharger.*` and
   `adbc.chargewire.*`. Existing configs keep working, and so do Hardcharger servers released before the rename.
+- Requires `adbc-driver-hardcharger` 2.1.0, the first driver that reads the `adbc.chargewire.*` options. CI
+  builds that release (hardcharger-adbc `460fcc1`, was 2.0.0's `5c5d999`).
 
 ## [2.0.1] - 2026-10-22
 

@@ -40,9 +40,9 @@ charts/adbc-replicate-hardcharger             Helm CronJob
   lowest-dependencies CI job installs exactly the floors.
 - Tests read only `ADBC_REPLICATE_HARDCHARGER_TEST_*` variables: developer shells export real
   credentials under generic names. Docker addresses are `127.0.0.1`, never `localhost`.
-- adbc-driver-hardcharger isn't on PyPI yet: CI's `driver` job builds it from gizmodata/hardcharger-adbc at
-  a pinned commit (public, fetched anonymously; zig for a
-  glibc-2.17 library) and every job installs that artifact; Docker builds find it in `wheels/`. The test
+- CI's `driver` job builds adbc-driver-hardcharger from gizmodata/hardcharger-adbc at a pinned commit (the
+  release tag matching the pyproject floor; public, fetched anonymously; zig for a glibc-2.17 library) and
+  every job installs that artifact; CI's Docker build finds it in `wheels/`, the release image uses PyPI. The test
   server is `ghcr.io/gizmodata/hardcharger:main`, pulled with GITHUB_TOKEN (the package grants this repo).
 - Integration tests FAIL (never skip) when a server is unreachable.
 - Every YAML block in README.md is validated by tests/unit/test_readme.py, and every config example runs
