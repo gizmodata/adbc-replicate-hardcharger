@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-11-02
+
+### Fixed
+
+- A run checks that an unchanged view still binds with `DESCRIBE SELECT * FROM <view>` instead of
+  `SELECT * FROM <view> LIMIT 0`. The `LIMIT 0` query was planned in full, and DuckDB 2.0's optimizer took
+  up to ~30 s on views with correlated subqueries: an hourly run of 291 Oracle views spent over 40 minutes
+  in these checks (TCM, 2026-11-02). For a non-administrator, Hardcharger's plan check also refused such
+  plans ("CUSTOM_OP" for dependent join), so every one of those views counted as broken and was recreated
+  on every run. DESCRIBE only binds, so a missing table or column still fails it.
+
 ## [2.1.0] - 2026-10-29
 
 ### Changed
