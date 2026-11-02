@@ -17,6 +17,7 @@ from adbc_replicate_hardcharger.config import parse_config
 from adbc_replicate_hardcharger.engine import EXIT_FAILED, EXIT_OK, EXIT_VIEW_ERRORS, Replicator, RunOptions
 from adbc_replicate_hardcharger.events import Reporter
 from adbc_replicate_hardcharger.planner import PlanError
+from adbc_replicate_hardcharger.targets.hardcharger import HardchargerTarget
 
 pytestmark = pytest.mark.integration
 
@@ -114,6 +115,29 @@ def test_second_run_skips_unchanged_and_copies_changed(paths):
     summary, out = run(config=make_config(paths=paths))
     assert summary.stats["tables_copied"] == 1 and "hr.dept" in out and "content changed" in out
     assert target_query(paths=paths, sql="SELECT name FROM hr.dept WHERE id = 1")[0][0] == "Eng"
+
+
+def test_unchanged_views_are_checked_by_binding_not_planning(paths, monkeypatch):
+    """An unchanged view is checked with DESCRIBE, which only binds it. `SELECT * ... LIMIT 0` plans the whole view:
+    DuckDB 2.0 took ~30 s on some views with correlated subqueries (TCM), and a non-administrator's plan check fails
+    on those ("CUSTOM_OP" for dependent join), so they were recreated on every run. The test server's admin plans
+    such a view quickly and passes the plan check, so the test asserts the statements the engine sends."""
+    view = "v_bind_" + uuid.uuid4().hex[:10]
+    source_exec(paths=paths, sql=f"CREATE VIEW hr.{view} AS SELECT e.id, (SELECT max(d.name) FROM hr.dept d "
+                                 "WHERE d.id = e.dept_id) AS dept FROM hr.employees e")
+    run(config=make_config(paths=paths))
+    sent = []
+    original = HardchargerTarget.query
+
+    def recording_query(conn, sql, parameters=None):
+        sent.append(sql)
+        return original(conn=conn, sql=sql, parameters=parameters)
+
+    monkeypatch.setattr(HardchargerTarget, "query", staticmethod(recording_query))
+    summary, out = run(config=make_config(paths=paths))
+    assert summary.stats["views_created"] == 0 and summary.stats["views_skipped"] == 3, out
+    probes = [s for s in sent if view in s]
+    assert probes == [f'DESCRIBE SELECT * FROM "hr"."{view}"'], probes
 
 
 def test_column_rule_change_forces_recopy(paths):

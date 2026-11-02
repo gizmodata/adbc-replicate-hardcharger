@@ -599,10 +599,15 @@ class Replicator:
         return created, skipped, failures
 
     def _view_binds(self, conn, view: ViewTask) -> bool:
-        """True if the target view still binds (all the tables and columns it reads exist)."""
+        """True if the target view still binds (all the tables and columns it reads exist).
+
+        DESCRIBE binds the view without planning it. A `SELECT * ... LIMIT 0` is planned in full: DuckDB 2.0's
+        optimizer took ~30 s on some views with correlated subqueries (TCM, 2026-11-02: one hourly run spent
+        over 40 minutes checking 291 views), and a non-administrator's plan check fails on them ("CUSTOM_OP"
+        for dependent join), which made every such view count as broken and be recreated on each run."""
         try:
-            self.target.query(conn=conn, sql="SELECT * FROM " + self.target.qualified(
-                db_schema=view.target_db_schema, name=view.target_view) + " LIMIT 0")
+            self.target.query(conn=conn, sql="DESCRIBE SELECT * FROM " + self.target.qualified(
+                db_schema=view.target_db_schema, name=view.target_view))
             conn.commit()
             return True
         except Exception:
