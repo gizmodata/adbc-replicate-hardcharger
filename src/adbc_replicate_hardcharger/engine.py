@@ -200,33 +200,42 @@ class Replicator:
                     task=task, previous=since,
                     lookback_minutes=0 if appending else self.config.refresh.watermark_lookback_minutes)
                 how = "appending" if appending else f"key {', '.join(task.incremental_key)}"
-                self.emit("table_started", f"  🔄 {'Appending to' if appending else 'Merging'} {name} → "
-                          f"{task.target_db_schema}.{task.target_table} "
-                          f"(rows with {task.watermark_column} after {since}, {how})",
-                          table=name, target=f"{task.target_db_schema}.{task.target_table}", reason="incremental",
-                          since=since)
-                result = self._with_retries(task=task, tconn=tconn, load=lambda: self._merge(
-                    task=task, sconn=sconn, tconn=tconn, where=where))
-                if result is not None:
-                    merged, deleted, row_count = result
-                    return TableResult(task=task, action="merged", reason=f"incremental since {since}", rows=merged,
-                                       deleted=deleted, row_count=row_count, change_token=token,
-                                       seconds=time.monotonic() - started)
-                reason = "row count differs from the source after the merge"
+                too_large = self._change_set_too_large(sconn=sconn, task=task, where=where, since=since)
+                if too_large is not None:
+                    reason, row_count = too_large
+                else:
+                    self.emit("table_started", f"  🔄 {'Appending to' if appending else 'Merging'} {name} → "
+                              f"{task.target_db_schema}.{task.target_table} "
+                              f"(rows with {task.watermark_column} after {since}, {how})",
+                              table=name, target=f"{task.target_db_schema}.{task.target_table}",
+                              reason="incremental", since=since)
+                    result = self._with_retries(task=task, tconn=tconn, load=lambda: self._merge(
+                        task=task, sconn=sconn, tconn=tconn, where=where))
+                    if result is not None:
+                        merged, deleted, row_count = result
+                        return TableResult(task=task, action="merged", reason=f"incremental since {since}",
+                                           rows=merged, deleted=deleted, row_count=row_count, change_token=token,
+                                           seconds=time.monotonic() - started)
+                    reason = "row count differs from the source after the merge"
             elif token and previous.get("change_token") and \
                     (where := self.source.incremental_filter(previous_token=previous["change_token"])) is not None:
                 since = previous["change_token"]
-                self.emit("table_started", f"  🔄 Merging {name} → {task.target_db_schema}.{task.target_table} "
-                          f"(rows changed since {since}, key {', '.join(task.incremental_key)})", table=name,
-                          target=f"{task.target_db_schema}.{task.target_table}", reason="incremental", since=since)
-                result = self._with_retries(task=task, tconn=tconn, load=lambda: self._merge(
-                    task=task, sconn=sconn, tconn=tconn, where=where))
-                if result is not None:
-                    merged, deleted, row_count = result
-                    return TableResult(task=task, action="merged", reason=f"incremental since {since}", rows=merged,
-                                       deleted=deleted, row_count=row_count, change_token=token,
-                                       seconds=time.monotonic() - started)
-                reason = "row count differs from the source after the merge"
+                too_large = self._change_set_too_large(sconn=sconn, task=task, where=where, since=since)
+                if too_large is not None:
+                    reason, row_count = too_large
+                else:
+                    self.emit("table_started", f"  🔄 Merging {name} → {task.target_db_schema}.{task.target_table} "
+                              f"(rows changed since {since}, key {', '.join(task.incremental_key)})", table=name,
+                              target=f"{task.target_db_schema}.{task.target_table}", reason="incremental",
+                              since=since)
+                    result = self._with_retries(task=task, tconn=tconn, load=lambda: self._merge(
+                        task=task, sconn=sconn, tconn=tconn, where=where))
+                    if result is not None:
+                        merged, deleted, row_count = result
+                        return TableResult(task=task, action="merged", reason=f"incremental since {since}",
+                                           rows=merged, deleted=deleted, row_count=row_count, change_token=token,
+                                           seconds=time.monotonic() - started)
+                    reason = "row count differs from the source after the merge"
             else:
                 row_count, fingerprint = self._fingerprint(conn=sconn, task=task)
                 if fingerprint is not None and previous["fingerprint"] == fingerprint \
@@ -300,6 +309,25 @@ class Replicator:
         if not (incremental and task.watermark_column):
             return token
         return previous.get("change_token") or self._watermark(conn=conn, task=task)
+
+    def _change_set_too_large(self, sconn, task: TableTask, where: str, since: str) -> tuple[str, int] | None:
+        """Count the rows `where` selects against the table's rows BEFORE staging any of them. Above
+        refresh.merge_max_fraction the caller copies the table whole: a MERGE that updates most of a
+        table (a dbt full refresh restamps every row) takes hours where a copy takes minutes, and on a
+        small server it can outlive the run. Returns the copy's reason and the source row count."""
+        limit = self.config.refresh.merge_max_fraction
+        if limit >= 1.0:
+            return None
+        changed = int(float(self.source.fetch_all(conn=sconn, sql=self.source.count_sql(task=task, where=where))[0][0]))
+        total = int(float(self.source.fetch_all(conn=sconn, sql=self.source.count_sql(task=task))[0][0]))
+        if total == 0 or changed <= limit * total:
+            return None
+        name = task.source.qualified_name
+        share = 100.0 * changed / total
+        self.emit("table_merge_too_large", f"  ⚠️  {name}: {fmt_rows(changed)} of {fmt_rows(total)} rows changed since "
+                  f"{since} ({share:.0f}%, over merge_max_fraction {limit:.0%}); copying it whole",
+                  level="warning", table=name, changed_rows=changed, source_rows=total, since=since)
+        return f"{share:.0f}% of the rows changed since {since}", total
 
     def _watermark(self, conn, task: TableTask) -> str | None:
         rows = self.source.fetch_all(conn=conn, sql=self.source.watermark_sql(task=task))

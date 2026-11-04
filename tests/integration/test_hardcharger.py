@@ -370,6 +370,40 @@ def test_merge_refuses_a_repeated_key(hardcharger, prefix):
     assert query(conn=hardcharger, sql=f"SELECT * FROM {s}.t ORDER BY k") == [(1, "a"), (2, "b")]
 
 
+def test_target_sessions_carry_a_statement_timeout(hardcharger, prefix):
+    """A run whose pod is killed left a MERGE running on the server for 9 hours (Vaden, 2026-11-03):
+    every target session sets hardcharger.query_timeout from target.statement_timeout_seconds, worker
+    clones included, and the server fails a statement that outlives it."""
+    def target_with(**extra):
+        return make_target(config=parse_config(data={
+            "version": 1, "source": {"type": "duckdb"}, "target": hardcharger_target(**extra),
+            "objects": [{"db_schemas": ["x"]}]}).target)
+
+    setting = "SELECT value FROM hardcharger_session_settings() WHERE name = 'hardcharger.query_timeout'"
+    conn = target_with().connect()
+    try:
+        assert query(conn=conn, sql=setting) == [("3600",)]      # the default: an hour
+    finally:
+        conn.close()
+    target = target_with(statement_timeout_seconds=1)
+    conn = target.connect()
+    worker = target.worker_connection(conn=conn)
+    try:
+        assert query(conn=conn, sql=setting) == [("1",)] and query(conn=worker, sql=setting) == [("1",)]
+        with pytest.raises(Exception, match="ran longer than its timeout"):
+            # a cross join the planner can't shortcut: many seconds of work, cut after one
+            target.query(conn=worker, sql="SELECT count(*) FROM range(300000) a, range(300000) b "
+                                          "WHERE a.range + b.range = -1")
+    finally:
+        worker.close()
+        conn.close()
+    conn = target_with(statement_timeout_seconds=0).connect()
+    try:
+        assert query(conn=conn, sql=setting) == [("0",)]         # 0: the server's own default
+    finally:
+        conn.close()
+
+
 # ---- Hardcharger as a target -------------------------------------------------------------------
 
 def pg_objects(prefix):

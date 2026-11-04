@@ -142,6 +142,12 @@ class HardchargerTarget(_HardchargerConnection):
                     "and committed as one (adbc.hardcharger.ingest.parts). Rows land in no defined order; "
                     "1 sends one stream in the source's order.",
     )
+    statement_timeout_seconds: int = Field(
+        default=3600, ge=0,
+        description="The server fails any SQL statement of this loader's sessions (a MERGE, a CREATE, a state "
+                    "write; not an upload) that runs longer than this (hardcharger.query_timeout), so a run "
+                    "whose pod is killed can't leave a statement running for hours. 0: no limit.",
+    )
 
 
 # ---- What to replicate ------------------------------------------------------------------
@@ -332,6 +338,13 @@ class RefreshConfig(_Model):
         default=360, ge=0,
         description="Re-read rows stamped this long before the previous maximum, for writes that commit out "
                     "of stamp order (two dbt jobs overlapping). Re-read rows merge to the same result.",
+    )
+    merge_max_fraction: float = Field(
+        default=0.25, ge=0.0, le=1.0,
+        description="incremental: copy a table whole instead of merging when the rows selected as changed "
+                    "exceed this fraction of its rows (counted in the source before anything is staged). A "
+                    "dbt full refresh restamps every row, and a MERGE that updates most of a table takes "
+                    "hours where a copy takes minutes. 1.0 always merges.",
     )
 
 

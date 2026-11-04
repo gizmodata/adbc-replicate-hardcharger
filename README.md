@@ -393,6 +393,7 @@ refresh:
   mode: incremental
   watermark_column: DBT_RUN_STARTED_AT
   watermark_lookback_minutes: 360   # default: re-read 6 h before the last stamp seen
+  merge_max_fraction: 0.25          # default: copy whole when over a quarter of the rows changed
   detect_deletes: false             # dbt merges never delete: check row counts instead (below)
   keys:                             # for tables whose source declares no primary key
     ANALYTICS.FACT_ORDERS: [ORDER_ID]                 # e.g. the dbt model's unique_key
@@ -406,6 +407,12 @@ are optional and never enforced, and dbt keeps a model's `unique_key` to itself.
 keyless tables that only grow, such as dbt incremental models without a `unique_key`, which dbt
 `INSERT`s into. Their newly stamped rows are appended, with no lookback, since a re-read would
 duplicate rows.
+
+Before anything is staged, the rows the filter selects are counted against the table's rows in the
+source. Above `merge_max_fraction` the table is copied whole instead: a `MERGE` that updates most of
+a table takes hours where a copy takes minutes (a dbt `--full-refresh` restamps every row), and on a
+small server it can outlive the run. Runs inside the lookback window after such a refresh copy whole
+again, until the watermark has moved past it.
 
 Without delete detection, each merge or append ends by comparing the target's row count with the
 source's. A mismatch rolls the merge back and copies the table whole: that happens after a delete in

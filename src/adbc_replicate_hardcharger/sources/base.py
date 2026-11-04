@@ -208,8 +208,9 @@ class Source(ABC):
         return (f"{col} > CAST({quote_literal(value=previous)} AS TIMESTAMP) "
                 f"- INTERVAL '{int(lookback_minutes)}' MINUTE")
 
-    def count_sql(self, task: TableTask) -> str:
-        return f"SELECT COUNT(*) FROM {self.table_ref(obj=task.source)}"
+    def count_sql(self, task: TableTask, where: str | None = None) -> str:
+        sql = f"SELECT COUNT(*) FROM {self.table_ref(obj=task.source)}"
+        return f"{sql} WHERE {where}" if where else sql
 
     def incremental_filter(self, previous_token: str) -> str | None:
         """A WHERE condition selecting the rows changed since `previous_token` (a superset is fine:

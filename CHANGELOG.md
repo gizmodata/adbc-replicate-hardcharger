@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-04
+
+### Added
+
+- `refresh.merge_max_fraction` (default 0.25): an incremental table's change set is counted in the source
+  before it is staged, and above this share of the table's rows the table is copied whole instead of
+  merged. Vaden (2026-11-03): a dbt `--full-refresh` restamped every row of three models, the watermark
+  filter selected 100% of them, and the resulting `MERGE ... UPDATE` of 6.25M rows ran for hours on a
+  2-vCPU server where a whole copy takes minutes.
+- `target.statement_timeout_seconds` (default 3600): every target session sets `hardcharger.query_timeout`,
+  so a SQL statement of the loader's cannot run longer than this on the server. The same incident's
+  pods were killed at the Job's deadline while their merges kept running on the server for up to 9 hours,
+  holding uncommitted staging tables that made every later run fail with "Catalog write-write conflict".
+  Uploads are not statements and are unaffected; 0 turns the limit off.
+
 ## [2.1.1] - 2026-11-02
 
 ### Fixed

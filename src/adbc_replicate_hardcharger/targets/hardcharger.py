@@ -56,8 +56,11 @@ class HardchargerTarget:
     def _open(self):
         from ..sources.hardcharger import hardcharger_connect
 
-        return hardcharger_connect(config=self.config, autocommit=False,
-                                   db_kwargs={"adbc.hardcharger.ingest.parts": str(self.config.ingest_parts)})
+        db_kwargs = {"adbc.hardcharger.ingest.parts": str(self.config.ingest_parts)}
+        if self.config.statement_timeout_seconds:
+            # hardcharger.query_timeout on every session this database opens (clones included)
+            db_kwargs["adbc.hardcharger.setting.query_timeout"] = str(self.config.statement_timeout_seconds)
+        return hardcharger_connect(config=self.config, autocommit=False, db_kwargs=db_kwargs)
 
     def connect(self):
         conn = self._open()

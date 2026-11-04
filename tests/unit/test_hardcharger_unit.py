@@ -74,13 +74,20 @@ def test_target_connects_without_autocommit_and_with_ingest_parts(driver):
     assert driver == [{"uri": "hardcharger://db.example.com:4433", "username": "loader", "password": "pw",
                        "tls_skip_verify": False, "tls_root_certs": "/etc/ca.pem", "autocommit": False,
                        "db_kwargs": {"adbc.hardcharger.ingest.parts": "3",
+                                     "adbc.hardcharger.setting.query_timeout": "3600",   # the default
                                      "adbc.chargewire.statement.result_partitions": "1"}}]
 
 
 def test_target_options_override_ingest_parts(driver):
-    make_target(config=config(target={"type": "hardcharger", "uri": "hardcharger://h",
+    make_target(config=config(target={"type": "hardcharger", "uri": "hardcharger://h", "statement_timeout_seconds": 0,
                                       "options": {"adbc.hardcharger.ingest.parts": "2"}}).target)._open()
-    assert driver[0]["db_kwargs"] == {"adbc.hardcharger.ingest.parts": "2"}
+    assert driver[0]["db_kwargs"] == {"adbc.hardcharger.ingest.parts": "2"}   # 0: no query_timeout is set
+
+
+def test_target_statement_timeout_is_a_session_setting(driver):
+    make_target(config=config(target={"type": "hardcharger", "uri": "hardcharger://h",
+                                      "statement_timeout_seconds": 90}).target)._open()
+    assert driver[0]["db_kwargs"]["adbc.hardcharger.setting.query_timeout"] == "90"
 
 
 @pytest.mark.parametrize(("consistency", "autocommit"), [("none", True), ("serializable", False)])
