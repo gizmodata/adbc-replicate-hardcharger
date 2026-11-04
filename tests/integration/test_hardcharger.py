@@ -371,7 +371,7 @@ def test_merge_refuses_a_repeated_key(hardcharger, prefix):
 
 
 def test_target_sessions_carry_a_statement_timeout(hardcharger, prefix):
-    """A run whose pod is killed left a MERGE running on the server for 9 hours (Vaden, 2026-11-03):
+    """A run whose pod is killed left a MERGE running on the server for 9 hours (a customer, 2026-11-03):
     every target session sets hardcharger.query_timeout from target.statement_timeout_seconds, worker
     clones included, and the server fails a statement that outlives it."""
     def target_with(**extra):

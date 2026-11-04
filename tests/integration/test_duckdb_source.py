@@ -625,7 +625,7 @@ def test_watermark_merge_falls_back_to_a_full_copy_on_deletes_and_duplicate_keys
 
 def test_watermark_merge_copies_the_table_whole_when_most_rows_changed(paths):
     """A dbt full refresh restamps every row. Merging all of them is a MERGE that updates the whole
-    table, hours where a copy takes minutes (Vaden, 2026-11-03), so the change set is counted in the
+    table, hours where a copy takes minutes (a customer, 2026-11-03), so the change set is counted in the
     source before anything is staged, and above refresh.merge_max_fraction the table is copied."""
     config = watermark_config(paths=paths, watermark_lookback_minutes=0)
     run(config=config)

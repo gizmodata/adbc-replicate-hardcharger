@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `refresh.merge_max_fraction` (default 0.25): an incremental table's change set is counted in the source
   before it is staged, and above this share of the table's rows the table is copied whole instead of
-  merged. Vaden (2026-11-03): a dbt `--full-refresh` restamped every row of three models, the watermark
+  merged. A customer (2026-11-03): a dbt `--full-refresh` restamped every row of three models, the watermark
   filter selected 100% of them, and the resulting `MERGE ... UPDATE` of 6.25M rows ran for hours on a
   2-vCPU server where a whole copy takes minutes.
 - `target.statement_timeout_seconds` (default 3600): every target session sets `hardcharger.query_timeout`,
