@@ -23,6 +23,7 @@ from conftest import (
     HARDCHARGER_PASSWORD,
     HARDCHARGER_URI,
     HARDCHARGER_USERNAME,
+    attached_catalog,
     execute,
     hardcharger_connect,
     hardcharger_source,
@@ -39,7 +40,7 @@ from adbc_replicate_hardcharger.planner import PlanError
 from adbc_replicate_hardcharger.sources import make_source
 from adbc_replicate_hardcharger.sources.duckdb import duckdb_connect
 from adbc_replicate_hardcharger.targets import make_target
-from adbc_replicate_hardcharger.targets.hardcharger import DuplicateKeyError
+from adbc_replicate_hardcharger.targets.hardcharger import DuplicateKeyError, TargetCatalogError
 
 pytestmark = pytest.mark.integration
 
@@ -448,6 +449,82 @@ def test_statement_timeout_survives_a_replaced_session(hardcharger, prefix):
         assert query(conn=conn, sql=setting) == [("7",)]
     finally:
         conn.close()
+
+
+def _session_id(conn) -> str:
+    from adbc_driver_hardcharger import ConnectionOptions
+
+    return conn.adbc_connection.get_option(key=ConnectionOptions.SESSION_ID.value)
+
+
+def _end_session_from_outside(conn) -> str:
+    """End the connection's session on the server, as an idle eviction or a restart does; returns its id."""
+    import urllib.request
+
+    from adbc_driver_hardcharger import ConnectionOptions
+
+    # Through the options, not Connection.session_id: a worker's adbc_clone() is a plain DB-API connection.
+    old = _session_id(conn=conn)
+    token = conn.adbc_connection.get_option(key=ConnectionOptions.ACCESS_TOKEN.value)
+    address = urlsplit(HARDCHARGER_URI.replace("hardcharger://", "http://"))
+    request = urllib.request.Request(url=f"http://{address.netloc}/chargewire/v1/sessions/{old}", method="DELETE",
+                                     headers={"Authorization": f"Bearer {token}"})
+    with urllib.request.urlopen(url=request, timeout=10) as response:
+        assert response.status == 204
+    return old
+
+
+def test_unknown_target_catalog_is_named(hardcharger, prefix):
+    """A target catalog the server doesn't have fails with an error that names it, and the twin with an
+    attached catalog of a name in another case connects to it."""
+    name = f"cat_{prefix}"
+
+    def target(catalog: str):
+        return make_target(config=parse_config(data={
+            "version": 1, "source": {"type": "duckdb"}, "target": hardcharger_target(catalog=catalog),
+            "objects": [{"db_schemas": ["x"]}]}).target)
+
+    with pytest.raises(TargetCatalogError, match=f"the target catalog '{name}' doesn't exist on the server"):
+        target(catalog=name).connect()
+    attached_catalog(hardcharger=hardcharger, name=name).close()
+    try:
+        conn = target(catalog=name.upper()).connect()
+        try:
+            assert query(conn=conn, sql="SELECT lower(current_database())") == [(name,)]
+        finally:
+            conn.close()
+    finally:
+        execute(conn=hardcharger, statements=[f"DETACH {name}"])
+
+
+def test_target_catalog_survives_a_replaced_session(hardcharger, prefix):
+    """The target's catalog holds in a session the driver opens to replace a lost one, on the main connection
+    and on a worker's clone. Set with SQL USE, it was gone there: the replacement started in the server's
+    default catalog, and every "db_schema"."table" name after the loss resolved against it."""
+    name = f"cat_{prefix}"
+    attached_catalog(hardcharger=hardcharger, name=name).close()
+    try:
+        target = make_target(config=parse_config(data={
+            "version": 1, "source": {"type": "duckdb"}, "target": hardcharger_target(catalog=name),
+            "objects": [{"db_schemas": ["x"]}]}).target)
+        conn = target.connect()
+        clone = target.worker_connection(conn=conn)
+        try:
+            for c in (conn, clone):
+                assert query(conn=c, sql="SELECT current_database()") == [(name,)]
+                c.commit()
+                old = _end_session_from_outside(conn=c)
+                # Target sessions never autocommit: the statement that finds the session gone fails with its
+                # transaction; the next one runs in the replacement, which must be in the target's catalog.
+                with pytest.raises(Exception, match="the open transaction that lived in it is gone"):
+                    query(conn=c, sql="SELECT current_database()")
+                assert _session_id(conn=c) != old
+                assert query(conn=c, sql="SELECT current_database()") == [(name,)]
+        finally:
+            clone.close()
+            conn.close()
+    finally:
+        execute(conn=hardcharger, statements=[f"DETACH {name}"])
 
 
 # ---- Hardcharger as a target -------------------------------------------------------------------

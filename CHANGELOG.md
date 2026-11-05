@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-11-05
+
+### Fixed
+
+- **The target's catalog is kept when the driver replaces a lost session.** The target set its catalog
+  with SQL `USE`, which a session the driver opens to replace a lost one (an idle eviction, an expired
+  token, a server restart) doesn't have: after the statement that found the session gone failed, every
+  later `"db_schema"."table"` name resolved against the server's default catalog, on the main connection
+  and on parallel workers. The catalog is now the connection's current catalog, set through the driver
+  (a Chargewire session option), which the driver sets again in every replacement session.
+- A `target.catalog` the server doesn't have now fails with an error that names it (it doesn't exist on
+  the server: attach it, or leave `target.catalog` out), checked before the catalog is set.
+- Requires `adbc-driver-hardcharger` 2.4.0 (was 2.3.0), so the container image and the Helm chart's
+  default image carry its fixes for lost sessions: no statement runs again on its own after a
+  transaction was lost when Hardcharger servers through 2.7.0 answer `BEGIN` before their session
+  document shows it, and none runs again without the lost session's `USE` and `SET`. It also defaults
+  `hardcharger://` URIs to GizmoData Cloud hosts without a port to 443.
+
 ## [2.3.0] - 2026-11-05
 
 ### Fixed

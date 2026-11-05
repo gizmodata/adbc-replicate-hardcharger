@@ -44,6 +44,10 @@ class DuplicateKeyError(Exception):
     """An incremental merge key isn't unique in the rows being merged."""
 
 
+class TargetCatalogError(Exception):
+    """The configured target catalog doesn't exist on the server."""
+
+
 class HardchargerTarget:
     dialect = "duckdb"
 
@@ -62,20 +66,42 @@ class HardchargerTarget:
             db_kwargs["adbc.hardcharger.setting.query_timeout"] = str(self.config.statement_timeout_seconds)
         return hardcharger_connect(config=self.config, autocommit=False, db_kwargs=db_kwargs)
 
+    @staticmethod
+    def _use_catalog(conn, catalog: str) -> None:
+        """Make catalog the connection's current catalog through the driver (a Chargewire session option), not
+        SQL USE: the driver sets it again in every session that replaces a lost one, where a USE would be gone
+        and every "db_schema"."table" name would resolve against the server's default catalog."""
+        conn.adbc_current_catalog = catalog
+
     def connect(self):
         conn = self._open()
-        if self.catalog:
-            self.execute(conn=conn, sql=f"USE {quote_ident(name=self.catalog)}")
-            conn.commit()
-        else:
-            self.catalog = self.query(conn=conn, sql="SELECT current_database()")[0][0]
-            conn.commit()
+        try:
+            if self.catalog:
+                # Checked first: the server's refusal of an unknown catalog option inside the connection's open
+                # transaction names only the aborted transaction, not the catalog.
+                found = self.query(conn=conn, sql="SELECT count(*) FROM duckdb_databases() "
+                                                  "WHERE lower(database_name) = lower(?)", parameters=[self.catalog])
+                conn.commit()
+                if not found[0][0]:
+                    raise TargetCatalogError(f"the target catalog {self.catalog!r} doesn't exist on the server: "
+                                             "attach it there, or leave target.catalog out to use the server's "
+                                             "default catalog")
+                self._use_catalog(conn=conn, catalog=self.catalog)
+            else:
+                self.catalog = self.query(conn=conn, sql="SELECT current_database()")[0][0]
+                conn.commit()
+        except BaseException:
+            conn.close()
+            raise
         return conn
 
     def worker_connection(self, conn):
         clone = conn.adbc_clone()
-        self.execute(conn=clone, sql=f"USE {quote_ident(name=self.catalog)}")
-        clone.commit()
+        try:
+            self._use_catalog(conn=clone, catalog=self.catalog)
+        except BaseException:
+            clone.close()  # an open clone keeps its database (shared with conn) from closing
+            raise
         return clone
 
     # ---- SQL helpers ----------------------------------------------------------------------

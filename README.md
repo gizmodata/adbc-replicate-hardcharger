@@ -139,7 +139,7 @@ adbc-replicate-hardcharger run --config replicate.yaml
 ```
 
 ```text
-✅ Source (postgresql): connected in 0.1s; catalog postgres, 2 db_schema(s) visible
+✅ Source (postgresql): connected in 0.2s; catalog postgres, 2 db_schema(s) visible
 ✅ Target (hardcharger): connected in 0.0s; catalog warehouse, DuckDB v2.0.0
 🗺️  Plan for shop-to-hardcharger: postgresql → hardcharger
 
@@ -151,7 +151,7 @@ adbc-replicate-hardcharger run --config replicate.yaml
   ✅ shop.customer_totals → shop.customer_totals
 
 ✨ 2 table(s) to copy, 1 view(s) ready
-🚀 adbc-replicate-hardcharger 2.3.0: postgresql → hardcharger (catalog warehouse), run a9f54b55-7352-4de7-a7bc-35aaf020850c
+🚀 adbc-replicate-hardcharger 2.3.1: postgresql → hardcharger (catalog warehouse), run 6e8258c1-6791-41c3-9509-58c2b894e0f9
 📸 Consistent read: exported snapshot 00000003-00000032-1
 🔍 Discovering source objects…
 🗺️  2 table(s) and 1 view(s) selected (0.0s)
@@ -160,12 +160,12 @@ adbc-replicate-hardcharger run --config replicate.yaml
   ✅ shop.customers: 1,000 rows in 0.0s (excluded email)
   📦 Copying shop.orders → shop.orders (missing in target)
   ✅ shop.orders: 100,000 rows in 0.1s
-📊 Tables: 2 copied (101,000 rows), 0 unchanged, 0 failed in 0.2s
+📊 Tables: 2 copied (101,000 rows), 0 unchanged, 0 failed in 0.1s
 🪟 Creating 1 view(s)…
   🪟 shop.customer_totals → shop.customer_totals
 🪟 Views: 1 created, 0 unchanged, 0 failed
 🏁 Run completed
-⏱️  0.4s
+⏱️  0.3s
 ```
 
 Run it again and nothing is copied — both tables are fingerprinted in PostgreSQL and skipped:
