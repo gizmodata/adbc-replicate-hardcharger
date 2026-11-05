@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-11-05
+
+### Fixed
+
+- `target.statement_timeout_seconds` now holds for a whole run. When the server lost a target session (an
+  idle eviction, an expired token) and the driver replaced it, the new session had no
+  `hardcharger.query_timeout`, so the rest of the run's statements on that connection ran without a limit.
+  adbc-driver-hardcharger 2.3.0 sets the connection's settings up in every replacement session
+  (`test_statement_timeout_survives_a_replaced_session`).
+
+### Changed
+
+- Requires `adbc-driver-hardcharger` 2.3.0 (was 2.1.0). Besides the fix above, it brings 2.2.0's: a statement
+  that finds its transaction lost with a replaced session fails instead of running again in autocommit in the
+  new session. It also waits for a GizmoData Cloud cluster that stopped itself and is starting again because
+  the run connected (`server_resuming`), for up to 600 s by default; set `adbc.hardcharger.resume_timeout`
+  (seconds, `0` fails at once) in the target's (or a Hardcharger source's) `options` to change it
+  (`test_target_passes_resume_timeout_to_the_driver`). CI builds that release
+  (hardcharger-adbc `d9ca42e`, was 2.1.0's `460fcc1`).
+
 ## [2.2.0] - 2026-11-04
 
 ### Added

@@ -140,7 +140,7 @@ adbc-replicate-hardcharger run --config replicate.yaml
 
 ```text
 ✅ Source (postgresql): connected in 0.1s; catalog postgres, 2 db_schema(s) visible
-✅ Target (hardcharger): connected in 0.1s; catalog warehouse, DuckDB v2.0.0
+✅ Target (hardcharger): connected in 0.0s; catalog warehouse, DuckDB v2.0.0
 🗺️  Plan for shop-to-hardcharger: postgresql → hardcharger
 
 📦 Tables (2)
@@ -151,8 +151,8 @@ adbc-replicate-hardcharger run --config replicate.yaml
   ✅ shop.customer_totals → shop.customer_totals
 
 ✨ 2 table(s) to copy, 1 view(s) ready
-🚀 adbc-replicate-hardcharger 2.1.0: postgresql → hardcharger (catalog warehouse), run ae8dffe1-da72-4b1d-9a07-57ed326ebcd9
-📸 Consistent read: exported snapshot 00000003-000002EF-1
+🚀 adbc-replicate-hardcharger 2.3.0: postgresql → hardcharger (catalog warehouse), run a9f54b55-7352-4de7-a7bc-35aaf020850c
+📸 Consistent read: exported snapshot 00000003-00000032-1
 🔍 Discovering source objects…
 🗺️  2 table(s) and 1 view(s) selected (0.0s)
 📦 Copying tables (parallelism 2)…
@@ -160,12 +160,12 @@ adbc-replicate-hardcharger run --config replicate.yaml
   ✅ shop.customers: 1,000 rows in 0.0s (excluded email)
   📦 Copying shop.orders → shop.orders (missing in target)
   ✅ shop.orders: 100,000 rows in 0.1s
-📊 Tables: 2 copied (101,000 rows), 0 unchanged, 0 failed in 0.1s
+📊 Tables: 2 copied (101,000 rows), 0 unchanged, 0 failed in 0.2s
 🪟 Creating 1 view(s)…
   🪟 shop.customer_totals → shop.customer_totals
 🪟 Views: 1 created, 0 unchanged, 0 failed
 🏁 Run completed
-⏱️  0.3s
+⏱️  0.4s
 ```
 
 Run it again and nothing is copied — both tables are fingerprinted in PostgreSQL and skipped:
@@ -723,7 +723,9 @@ target:
 - **Connections.** `hardcharger://host` is HTTPS on port 31337; `hardcharger://host:port` picks another
   port and `hardcharger://host?tls=false` is plain HTTP (development only). `tls_root_certs` trusts a
   private CA (a PEM file), `tls_skip_verify` skips verification (development only), and any
-  `adbc.hardcharger.*` / `adbc.chargewire.*` driver option goes in `options`.
+  `adbc.hardcharger.*` / `adbc.chargewire.*` driver option goes in `options`. A GizmoData Cloud cluster that
+  stopped itself starts again when a run connects, and the driver waits up to 600 s for it; set
+  `adbc.hardcharger.resume_timeout` (seconds; `"0"` fails at once) in `options` to change that.
 - **Loads.** Each table's rows go up as `ingest_parts` parts at once, each over its own connection
   (Chargewire partitioned ingest), into the run's target transaction like any other statement: readers
   keep the previous copy until it commits, and a failed or interrupted load rolls back, parts and all.

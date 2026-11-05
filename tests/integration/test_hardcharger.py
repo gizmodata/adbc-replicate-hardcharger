@@ -404,6 +404,52 @@ def test_target_sessions_carry_a_statement_timeout(hardcharger, prefix):
         conn.close()
 
 
+def test_target_passes_resume_timeout_to_the_driver(hardcharger):
+    """adbc.hardcharger.resume_timeout (how long to wait for a GizmoData Cloud cluster that is starting again)
+    goes through target.options, and the driver (2.3.0 on) takes it."""
+    target = make_target(config=parse_config(data={
+        "version": 1, "source": {"type": "duckdb"},
+        "target": hardcharger_target(options={"adbc.hardcharger.resume_timeout": "45"}),
+        "objects": [{"db_schemas": ["x"]}]}).target)
+    conn = target.connect()
+    try:
+        assert conn.adbc_database.get_option(key="adbc.chargewire.resume_timeout") == "45"
+        assert query(conn=conn, sql="SELECT 41 + 1") == [(42,)]
+    finally:
+        conn.close()
+
+
+def test_statement_timeout_survives_a_replaced_session(hardcharger, prefix):
+    """The server replaces a session it lost (an idle eviction, an expired token); before
+    adbc-driver-hardcharger 2.3.0 the replacement had none of the connection's settings, so a target
+    session's hardcharger.query_timeout fell back to the server's default (no limit) for the rest of the run."""
+    import urllib.request
+
+    target = make_target(config=parse_config(data={
+        "version": 1, "source": {"type": "duckdb"}, "target": hardcharger_target(statement_timeout_seconds=7),
+        "objects": [{"db_schemas": ["x"]}]}).target)
+    setting = "SELECT value FROM hardcharger_session_settings() WHERE name = 'hardcharger.query_timeout'"
+    conn = target.connect()
+    try:
+        assert query(conn=conn, sql=setting) == [("7",)]
+        conn.commit()
+        old = conn.session_id
+        # End the session from outside, as an idle eviction does; the driver then opens a replacement.
+        address = urlsplit(HARDCHARGER_URI.replace("hardcharger://", "http://"))
+        request = urllib.request.Request(url=f"http://{address.netloc}/chargewire/v1/sessions/{old}", method="DELETE",
+                                         headers={"Authorization": f"Bearer {conn.access_token}"})
+        with urllib.request.urlopen(url=request, timeout=10) as response:
+            assert response.status == 204
+        # Target sessions never autocommit, so the statement that finds the session gone fails with its
+        # transaction (it must not run again on its own in the new session); the next one runs there.
+        with pytest.raises(Exception, match="the open transaction that lived in it is gone"):
+            query(conn=conn, sql=setting)
+        assert conn.session_id != old
+        assert query(conn=conn, sql=setting) == [("7",)]
+    finally:
+        conn.close()
+
+
 # ---- Hardcharger as a target -------------------------------------------------------------------
 
 def pg_objects(prefix):
