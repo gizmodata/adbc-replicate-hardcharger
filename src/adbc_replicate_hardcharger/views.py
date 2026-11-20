@@ -305,7 +305,15 @@ def _oracle_dates(body: exp.Expression, time_zone: str | None, column_types: dic
     # TRUNC(date, 'DD') arrives as DATE_TRUNC with Oracle's unit names, which DuckDB doesn't know.
     for node in list(body.find_all(exp.DateTrunc)):
         unit = node.args.get("unit")
-        if isinstance(unit, exp.Literal) and unit.is_string:
+        if isinstance(unit, exp.WeekStart):
+            # sqlglot 30.33 on reads Oracle's week units as a week start: 'IW' (the ISO week) starts on
+            # Monday, as DuckDB's 'week' does; 'DY' / 'D' / 'DAY' start on the first day of the week of the
+            # session's NLS_TERRITORY, which the view doesn't say (sqlglot assumes Sunday).
+            if unit.this is None or unit.this.name.upper() != "MONDAY":
+                raise ViewTranslationError("TRUNC(date, 'DY' / 'D' / 'DAY') has no exact DuckDB equivalent: the "
+                                           "week starts on the source session's NLS_TERRITORY day")
+            node.set("unit", exp.Literal.string("week"))
+        elif isinstance(unit, exp.Literal) and unit.is_string:
             mapped = _TRUNC_UNITS.get(unit.this.upper())
             if mapped is None and unit.this.lower() not in set(_TRUNC_UNITS.values()):
                 raise ViewTranslationError(f"TRUNC(date, '{unit.this}') has no exact DuckDB equivalent")

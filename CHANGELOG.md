@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-11-20
+
+### Changed
+
+- **Driver option names follow the [ADBC driver style guide](https://adbc-drivers.org/building-drivers/style-guide.html)**:
+  requires `adbc-driver-hardcharger` 2.7.0 (was 2.4.0), whose options are `hardcharger.*` (the `adbc.` prefix
+  is the ADBC specification's own). The target sends its defaults as `hardcharger.ingest.parts` and
+  `hardcharger.setting.query_timeout` (were `adbc.hardcharger.*`), and the README and the config schema's
+  `target.options` description name the new keys (`hardcharger.retry.resume_timeout_seconds` for
+  `adbc.hardcharger.resume_timeout`). **Configs keep working**: the old names in `options`
+  (`adbc.hardcharger.*`, `adbc.chargewire.*`) still set their options, and the driver prints
+  `[hardcharger] option "<old>" is deprecated; use "<new>"` to stderr once per run; rename them to silence
+  it (the driver's 2.7.0 CHANGELOG has the full table).
+- An option in `target.options` replaces the target's default for it under any of its names: a default is no
+  longer sent beside the same option under another name. Given one option twice, the driver keeps the
+  style-guide name, so `adbc.hardcharger.ingest.parts` in a config would otherwise have lost to the
+  default sent as `hardcharger.ingest.parts`.
+- The Oracle extra requires `adbc-driver-oracle` 1.1.0 (was 1.0.1), whose options follow the same guide:
+  the README's examples use `oracle.nne` (was `adbc.oracle.nne`) and `oracle.*` for the driver's options.
+  The old `adbc.oracle.*` names in a source's `options` still work, with a deprecation line on stderr.
+
+### Fixed
+
+- A `target.options` query timeout written with the setting's server-side name
+  (`hardcharger.setting.hardcharger.query_timeout`) now replaces the default timeout instead of losing to it.
+- **Oracle `TRUNC(date, 'DAY')` (and `'D'`, `'DY'`) in a view is refused** instead of translated as a
+  truncation to the day: in Oracle it truncates to the first day of the week, which depends on the source
+  session's NLS_TERRITORY. With sqlglot 30.23 to 30.31 the unit `'DAY'` passed through as DuckDB's `day`;
+  sqlglot 30.32 reads it as a week starting on Sunday, which the translator now refuses too. `'IW'` (the
+  ISO week, starting on Monday) is still translated to DuckDB's `week`. Requires `sqlglot` 30.33.0 (was
+  30.23.0), where Oracle's week units arrive as week starts.
+
 ## [2.3.1] - 2026-11-05
 
 ### Fixed

@@ -39,6 +39,19 @@ def _failed_before_running(error: BaseException) -> bool:
 
 STATEMENT_RETRIES = 3
 
+# Every name adbc-driver-hardcharger takes for an option this target sets by default: the ADBC style-guide
+# name (2.7.0 on) first, then the older ones, which still work with a deprecation warning. A user who sets
+# any of them in target.options replaces the default, which is then not sent at all: given one option
+# under two names, the driver uses the style-guide name, so a default sent beside an old name would win
+# over the user's value.
+INGEST_PARTS_OPTION = ("hardcharger.ingest.parts", "chargewire.ingest.parts", "adbc.hardcharger.ingest.parts",
+                       "adbc.chargewire.ingest.parts", "adbc.warp.ingest.parts")
+# The setting may also be named with its server-side prefix (hardcharger.query_timeout), which the driver
+# accepts after the option prefix.
+QUERY_TIMEOUT_OPTION = ("hardcharger.setting.query_timeout", "adbc.hardcharger.setting.query_timeout",
+                        "hardcharger.setting.hardcharger.query_timeout",
+                        "adbc.hardcharger.setting.hardcharger.query_timeout")
+
 
 class DuplicateKeyError(Exception):
     """An incremental merge key isn't unique in the rows being merged."""
@@ -60,10 +73,13 @@ class HardchargerTarget:
     def _open(self):
         from ..sources.hardcharger import hardcharger_connect
 
-        db_kwargs = {"adbc.hardcharger.ingest.parts": str(self.config.ingest_parts)}
-        if self.config.statement_timeout_seconds:
+        options = self.config.options
+        db_kwargs = {}
+        if not any(name in options for name in INGEST_PARTS_OPTION):
+            db_kwargs[INGEST_PARTS_OPTION[0]] = str(self.config.ingest_parts)
+        if self.config.statement_timeout_seconds and not any(name in options for name in QUERY_TIMEOUT_OPTION):
             # hardcharger.query_timeout on every session this database opens (clones included)
-            db_kwargs["adbc.hardcharger.setting.query_timeout"] = str(self.config.statement_timeout_seconds)
+            db_kwargs[QUERY_TIMEOUT_OPTION[0]] = str(self.config.statement_timeout_seconds)
         return hardcharger_connect(config=self.config, autocommit=False, db_kwargs=db_kwargs)
 
     @staticmethod

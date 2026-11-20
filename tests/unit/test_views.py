@@ -146,8 +146,12 @@ def test_oracle_trunc_and_cast_as_date_keep_date_semantics():
     assert "TRUNC(\"e\".\"rate\") AS \"r\"" in sql                       # a number stays a number
     assert "DATE_TRUNC('month'" in sql and "DATE_TRUNC('hour'" in sql
     assert "CAST(\"e\".\"hired\" AS TIMESTAMP_S) AS \"c\"" in sql       # not DATE: keeps the time of day
-    with pytest.raises(ViewTranslationError, match="TRUNC"):
-        ora(definition="SELECT TRUNC(e.hired, 'DY') AS w FROM emp e", column_types=types)
+    # sqlglot 30.33 on reads week units as a week start: the ISO week is DuckDB's, the territory's isn't.
+    assert "DATE_TRUNC('week', \"e\".\"hired\") AS \"w\"" in ora(
+        definition="SELECT TRUNC(e.hired, 'IW') AS w FROM emp e", column_types=types)
+    for unit in ("DY", "D", "DAY", "WW", "W", "CC"):
+        with pytest.raises(ViewTranslationError, match="TRUNC"):
+            ora(definition=f"SELECT TRUNC(e.hired, '{unit}') AS w FROM emp e", column_types=types)
 
 
 def test_instr_position_and_occurrence_are_translated():

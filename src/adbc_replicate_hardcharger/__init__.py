@@ -1,3 +1,3 @@
 """adbc-replicate-hardcharger: config-driven ADBC-to-ADBC replication into Hardcharger, by GizmoData."""
 
-__version__ = "2.3.1"
+__version__ = "2.4.0"

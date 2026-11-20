@@ -22,7 +22,7 @@ concurrency:
 # Anything missing FAILS; nothing is skipped.
 env:
   HARDCHARGER_IMAGE: ghcr.io/gizmodata/hardcharger:main
-  HARDCHARGER_ADBC_COMMIT: 193344b918ab1f990f20765acb438180cb7a48e2
+  HARDCHARGER_ADBC_COMMIT: f9bef96138b7c5f0c838dab3302a4db81e12ebcb   # v2.7.0
 
 jobs:
   lint:
@@ -55,7 +55,7 @@ jobs:
       # The driver's own Linux build: zig targeting glibc 2.17, so the library loads in the Docker image too.
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.17.0
+          version: 0.17.1
       - uses: actions/setup-python@v7
         with:
           python-version: '3.13'

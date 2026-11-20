@@ -128,7 +128,7 @@ class HardchargerTarget(_HardchargerConnection):
 
     type: Literal["hardcharger"] = "hardcharger"
     options: dict[str, str] = Field(default_factory=dict, description="Extra ADBC database options "
-                                                                      "(adbc.hardcharger.*, adbc.chargewire.*).")
+                                                                      "(hardcharger.*).")
     checkpoint: bool = Field(
         default=True,
         description="Run CHECKPOINT before and after a load so the WAL is folded into the database "
@@ -139,7 +139,7 @@ class HardchargerTarget(_HardchargerConnection):
     ingest_parts: int = Field(
         default=8, ge=1, le=256,
         description="A table's upload is sent as up to this many parts at once, each over its own connection, "
-                    "and committed as one (adbc.hardcharger.ingest.parts). Rows land in no defined order; "
+                    "and committed as one (hardcharger.ingest.parts). Rows land in no defined order; "
                     "1 sends one stream in the source's order.",
     )
     statement_timeout_seconds: int = Field(
