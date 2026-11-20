@@ -139,7 +139,7 @@ adbc-replicate-hardcharger run --config replicate.yaml
 ```
 
 ```text
-✅ Source (postgresql): connected in 0.2s; catalog postgres, 2 db_schema(s) visible
+✅ Source (postgresql): connected in 0.1s; catalog postgres, 2 db_schema(s) visible
 ✅ Target (hardcharger): connected in 0.0s; catalog warehouse, DuckDB v2.0.0
 🗺️  Plan for shop-to-hardcharger: postgresql → hardcharger
 
@@ -151,8 +151,8 @@ adbc-replicate-hardcharger run --config replicate.yaml
   ✅ shop.customer_totals → shop.customer_totals
 
 ✨ 2 table(s) to copy, 1 view(s) ready
-🚀 adbc-replicate-hardcharger 2.3.1: postgresql → hardcharger (catalog warehouse), run 6e8258c1-6791-41c3-9509-58c2b894e0f9
-📸 Consistent read: exported snapshot 00000003-00000032-1
+🚀 adbc-replicate-hardcharger 2.4.0: postgresql → hardcharger (catalog warehouse), run 863adbaf-03b1-4251-b750-8c5c152fb77f
+📸 Consistent read: exported snapshot 00000003-0000003F-1
 🔍 Discovering source objects…
 🗺️  2 table(s) and 1 view(s) selected (0.0s)
 📦 Copying tables (parallelism 2)…
