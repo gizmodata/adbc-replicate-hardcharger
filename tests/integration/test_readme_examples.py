@@ -170,7 +170,7 @@ def local(source: dict) -> dict:
     source = dict(source)
     if source["type"] == "oracle":
         source.update(uri=ORACLE_URI, username=ORACLE_USERNAME, password=ORACLE_PASSWORD)
-        source.pop("options", None)      # adbc.oracle.nne: the test server doesn't offer encryption
+        source.pop("options", None)      # oracle.nne: the test server doesn't offer encryption
     elif source["type"] == "postgresql":
         source.update(uri=POSTGRES_URI, username=POSTGRES_USERNAME, password=POSTGRES_PASSWORD)
     elif source["type"] == "hardcharger":
@@ -287,7 +287,7 @@ def test_everything_else(oracle_examples, hardcharger, monkeypatch):
 
 
 def test_oracle_source(oracle_examples, hardcharger, monkeypatch):
-    summary, out, tables, _views = run_example(data=block(marker="adbc.oracle.nne: required"),
+    summary, out, tables, _views = run_example(data=block(marker="oracle.nne: required"),
                                                  hardcharger=hardcharger, monkeypatch=monkeypatch)
     assert summary.exit_code == EXIT_OK and ("erp", "quote_lines") in tables, out
 

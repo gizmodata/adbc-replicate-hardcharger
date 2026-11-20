@@ -10,7 +10,12 @@ import pytest
 from adbc_replicate_hardcharger.config import ConfigError, json_schema, parse_config
 from adbc_replicate_hardcharger.sources import make_source
 from adbc_replicate_hardcharger.targets import make_target
-from adbc_replicate_hardcharger.targets.hardcharger import _failed_before_running, is_transient
+from adbc_replicate_hardcharger.targets.hardcharger import (
+    INGEST_PARTS_OPTION,
+    QUERY_TIMEOUT_OPTION,
+    _failed_before_running,
+    is_transient,
+)
 
 
 def config(source=None, target=None, **extra):
@@ -68,26 +73,42 @@ def test_json_schema_has_hardcharger():
 def test_target_connects_without_autocommit_and_with_ingest_parts(driver):
     target = make_target(config=config(target={
         "type": "hardcharger", "uri": "hardcharger://db.example.com:4433", "username": "loader", "password": "pw",
-        "tls_root_certs": "/etc/ca.pem", "ingest_parts": 3, "options": {"adbc.chargewire.statement.result_partitions": "1"}}
+        "tls_root_certs": "/etc/ca.pem", "ingest_parts": 3, "options": {"hardcharger.query.result_partitions": "1"}}
     ).target)
     target._open()
     assert driver == [{"uri": "hardcharger://db.example.com:4433", "username": "loader", "password": "pw",
                        "tls_skip_verify": False, "tls_root_certs": "/etc/ca.pem", "autocommit": False,
-                       "db_kwargs": {"adbc.hardcharger.ingest.parts": "3",
-                                     "adbc.hardcharger.setting.query_timeout": "3600",   # the default
-                                     "adbc.chargewire.statement.result_partitions": "1"}}]
+                       "db_kwargs": {"hardcharger.ingest.parts": "3",
+                                     "hardcharger.setting.query_timeout": "3600",   # the default
+                                     "hardcharger.query.result_partitions": "1"}}]
 
 
 def test_target_options_override_ingest_parts(driver):
     make_target(config=config(target={"type": "hardcharger", "uri": "hardcharger://h", "statement_timeout_seconds": 0,
-                                      "options": {"adbc.hardcharger.ingest.parts": "2"}}).target)._open()
-    assert driver[0]["db_kwargs"] == {"adbc.hardcharger.ingest.parts": "2"}   # 0: no query_timeout is set
+                                      "options": {"hardcharger.ingest.parts": "2"}}).target)._open()
+    assert driver[0]["db_kwargs"] == {"hardcharger.ingest.parts": "2"}   # 0: no query_timeout is set
+
+
+@pytest.mark.parametrize("name", INGEST_PARTS_OPTION)
+def test_target_option_under_any_name_replaces_the_ingest_parts_default(driver, name):
+    """A config written before the style-guide names (adbc.hardcharger.ingest.parts) still sets the option:
+    the default isn't sent beside it, where the driver would take the default's newer name over the user's."""
+    make_target(config=config(target={"type": "hardcharger", "uri": "hardcharger://h", "statement_timeout_seconds": 0,
+                                      "options": {name: "2"}}).target)._open()
+    assert driver[0]["db_kwargs"] == {name: "2"}
+
+
+@pytest.mark.parametrize("name", QUERY_TIMEOUT_OPTION)
+def test_target_option_under_any_name_replaces_the_query_timeout_default(driver, name):
+    make_target(config=config(target={"type": "hardcharger", "uri": "hardcharger://h", "statement_timeout_seconds": 90,
+                                      "options": {name: "30"}}).target)._open()
+    assert driver[0]["db_kwargs"] == {"hardcharger.ingest.parts": "8", name: "30"}
 
 
 def test_target_statement_timeout_is_a_session_setting(driver):
     make_target(config=config(target={"type": "hardcharger", "uri": "hardcharger://h",
                                       "statement_timeout_seconds": 90}).target)._open()
-    assert driver[0]["db_kwargs"]["adbc.hardcharger.setting.query_timeout"] == "90"
+    assert driver[0]["db_kwargs"]["hardcharger.setting.query_timeout"] == "90"
 
 
 @pytest.mark.parametrize(("consistency", "autocommit"), [("none", True), ("serializable", False)])

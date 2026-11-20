@@ -40,7 +40,12 @@ from adbc_replicate_hardcharger.planner import PlanError
 from adbc_replicate_hardcharger.sources import make_source
 from adbc_replicate_hardcharger.sources.duckdb import duckdb_connect
 from adbc_replicate_hardcharger.targets import make_target
-from adbc_replicate_hardcharger.targets.hardcharger import DuplicateKeyError, TargetCatalogError
+from adbc_replicate_hardcharger.targets.hardcharger import (
+    INGEST_PARTS_OPTION,
+    QUERY_TIMEOUT_OPTION,
+    DuplicateKeyError,
+    TargetCatalogError,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -406,16 +411,46 @@ def test_target_sessions_carry_a_statement_timeout(hardcharger, prefix):
 
 
 def test_target_passes_resume_timeout_to_the_driver(hardcharger):
-    """adbc.hardcharger.resume_timeout (how long to wait for a GizmoData Cloud cluster that is starting again)
-    goes through target.options, and the driver (2.3.0 on) takes it."""
+    """hardcharger.retry.resume_timeout_seconds (how long to wait for a GizmoData Cloud cluster that is starting
+    again) goes through target.options, and the driver takes it."""
     target = make_target(config=parse_config(data={
         "version": 1, "source": {"type": "duckdb"},
-        "target": hardcharger_target(options={"adbc.hardcharger.resume_timeout": "45"}),
+        "target": hardcharger_target(options={"hardcharger.retry.resume_timeout_seconds": "45"}),
         "objects": [{"db_schemas": ["x"]}]}).target)
     conn = target.connect()
     try:
-        assert conn.adbc_database.get_option(key="adbc.chargewire.resume_timeout") == "45"
+        assert conn.adbc_database.get_option(key="hardcharger.retry.resume_timeout_seconds") == "45"
         assert query(conn=conn, sql="SELECT 41 + 1") == [(42,)]
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("name", QUERY_TIMEOUT_OPTION)
+def test_target_option_under_any_name_replaces_the_query_timeout_default(hardcharger, name):
+    """A config written before adbc-driver-hardcharger 2.7.0 (adbc.hardcharger.setting.query_timeout) still sets
+    the session's timeout: the target's default goes under the style-guide name, which the driver would take
+    over the user's older one, so it isn't sent beside it (the old name prints a deprecation line)."""
+    target = make_target(config=parse_config(data={
+        "version": 1, "source": {"type": "duckdb"}, "target": hardcharger_target(options={name: "5"}),
+        "objects": [{"db_schemas": ["x"]}]}).target)
+    conn = target.connect()
+    try:
+        assert query(conn=conn, sql="SELECT value FROM hardcharger_session_settings() "
+                                    "WHERE name = 'hardcharger.query_timeout'") == [("5",)]
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("name", INGEST_PARTS_OPTION)
+def test_target_option_under_any_name_replaces_the_ingest_parts_default(hardcharger, name):
+    """Every name in INGEST_PARTS_OPTION is one the driver reads as hardcharger.ingest.parts, and the user's
+    value is the one it keeps."""
+    target = make_target(config=parse_config(data={
+        "version": 1, "source": {"type": "duckdb"}, "target": hardcharger_target(options={name: "2"}),
+        "objects": [{"db_schemas": ["x"]}]}).target)
+    conn = target.connect()
+    try:
+        assert conn.adbc_database.get_option(key="hardcharger.ingest.parts") == "2"
     finally:
         conn.close()
 

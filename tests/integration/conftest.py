@@ -114,7 +114,7 @@ def oracle():
     # consistency: snapshot reads an exact SCN through DBMS_FLASHBACK (see README); only SYS can grant it
     import adbc_driver_oracle.dbapi as oracle_dbapi
     sys_conn = oracle_dbapi.connect(uri=ORACLE_URI, autocommit=True, db_kwargs={
-        "username": "sys", "password": ORACLE_SYSTEM_PASSWORD, "adbc.oracle.mode": "sysdba"})
+        "username": "sys", "password": ORACLE_SYSTEM_PASSWORD, "oracle.auth.mode": "sysdba"})
     execute(conn=sys_conn, statements=[f"GRANT EXECUTE ON SYS.DBMS_FLASHBACK TO {ORACLE_USERNAME}"])
     sys_conn.close()
     conn = oracle_connect()

@@ -541,7 +541,7 @@ source:
   unconstrained_number: decimal      # decimal (default) | double | string
   external_tables: include           # include (default) | exclude
   options:
-    adbc.oracle.nne: required        # Native Network Encryption, fail closed
+    oracle.nne: required             # Native Network Encryption, fail closed
 target:
   type: hardcharger
   uri: hardcharger://hardcharger.example.com
@@ -565,7 +565,7 @@ objects:
   `BLOB` column without its bytes (so views selecting it still work), mask it: `"null"`.
 - On 23ai and later, `GRANT SELECT ANY TABLE ON SCHEMA ERP` and `GRANT FLASHBACK ANY TABLE ON
   SCHEMA ERP` cover every current and future table in a schema.
-- Any `adbc.oracle.*` driver option (TLS, wallets, NNE, batch sizes) goes in `options`.
+- Any `oracle.*` driver option (TLS, wallets, NNE, batch sizes) goes in `options`.
 </details>
 
 <details>
@@ -723,9 +723,10 @@ target:
 - **Connections.** `hardcharger://host` is HTTPS on port 31337; `hardcharger://host:port` picks another
   port and `hardcharger://host?tls=false` is plain HTTP (development only). `tls_root_certs` trusts a
   private CA (a PEM file), `tls_skip_verify` skips verification (development only), and any
-  `adbc.hardcharger.*` / `adbc.chargewire.*` driver option goes in `options`. A GizmoData Cloud cluster that
-  stopped itself starts again when a run connects, and the driver waits up to 600 s for it; set
-  `adbc.hardcharger.resume_timeout` (seconds; `"0"` fails at once) in `options` to change that.
+  `hardcharger.*` driver option goes in `options` (the names from before adbc-driver-hardcharger 2.7.0,
+  `adbc.hardcharger.*` and `adbc.chargewire.*`, still work, with a deprecation line on stderr). A GizmoData
+  Cloud cluster that stopped itself starts again when a run connects, and the driver waits up to 600 s for
+  it; set `hardcharger.retry.resume_timeout_seconds` (seconds; `"0"` fails at once) in `options` to change that.
 - **Loads.** Each table's rows go up as `ingest_parts` parts at once, each over its own connection
   (Chargewire partitioned ingest), into the run's target transaction like any other statement: readers
   keep the previous copy until it commits, and a failed or interrupted load rolls back, parts and all.
