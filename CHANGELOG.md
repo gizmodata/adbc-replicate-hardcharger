@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `target.options` query timeout written with the setting's server-side name
+  (`hardcharger.setting.hardcharger.query_timeout`) now replaces the default timeout instead of losing to it.
 - **Oracle `TRUNC(date, 'DAY')` (and `'D'`, `'DY'`) in a view is refused** instead of translated as a
   truncation to the day: in Oracle it truncates to the first day of the week, which depends on the source
   session's NLS_TERRITORY. With sqlglot 30.23 to 30.31 the unit `'DAY'` passed through as DuckDB's `day`;

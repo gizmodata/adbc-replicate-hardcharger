@@ -46,7 +46,11 @@ STATEMENT_RETRIES = 3
 # over the user's value.
 INGEST_PARTS_OPTION = ("hardcharger.ingest.parts", "chargewire.ingest.parts", "adbc.hardcharger.ingest.parts",
                        "adbc.chargewire.ingest.parts", "adbc.warp.ingest.parts")
-QUERY_TIMEOUT_OPTION = ("hardcharger.setting.query_timeout", "adbc.hardcharger.setting.query_timeout")
+# The setting may also be named with its server-side prefix (hardcharger.query_timeout), which the driver
+# accepts after the option prefix.
+QUERY_TIMEOUT_OPTION = ("hardcharger.setting.query_timeout", "adbc.hardcharger.setting.query_timeout",
+                        "hardcharger.setting.hardcharger.query_timeout",
+                        "adbc.hardcharger.setting.hardcharger.query_timeout")
 
 
 class DuplicateKeyError(Exception):
